@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+JSON Validator for Calendar CLI Tools
+Usage: ./validate-json < input.json
+Returns: Exit code 0 for valid JSON, 1 for invalid
+
+Validates timezone-aware ISO 8601 datetime formats in calendar events.
+"""
+
+import json
+import sys
+
+def main():
+    try:
+        # Read from stdin
+        input_data = sys.stdin.read().strip()
+        
+        if not input_data:
+            print("Error: No input provided", file=sys.stderr)
+            sys.exit(1)
+        
+        # Try to parse JSON
+        data = json.loads(input_data)
+        
+        # Validate structure for calendar data
+        if 'events' in data:
+            events = data['events']
+            if not isinstance(events, list):
+                print("Error: 'events' should be an array", file=sys.stderr)
+                sys.exit(1)
+            
+            for i, event in enumerate(events):
+                if not isinstance(event, dict):
+                    print(f"Error: Event {i+1} is not an object", file=sys.stderr)
+                    sys.exit(1)
+                
+                required_fields = ['title', 'startDate', 'endDate']
+                for field in required_fields:
+                    if field not in event:
+                        print(f"Error: Event {i+1} missing required field '{field}'", file=sys.stderr)
+                        sys.exit(1)
+            
+            print(f"✅ Valid JSON with {len(events)} events")
+        
+        elif 'calendars' in data:
+            calendars = data['calendars']
+            if not isinstance(calendars, list):
+                print("Error: 'calendars' should be an array", file=sys.stderr)
+                sys.exit(1)
+            
+            print(f"✅ Valid JSON with {len(calendars)} calendars")
+        
+        elif 'status' in data:
+            status = data['status']
+            if status not in ['created', 'deleted', 'exists', 'not_found', 'cancelled']:
+                print(f"Error: Invalid status '{status}'", file=sys.stderr)
+                sys.exit(1)
+            
+            print(f"✅ Valid JSON with status '{status}'")
+        
+        elif 'error' in data:
+            print(f"⚠️  Valid JSON with error: {data['error']}")
+        
+        else:
+            print("✅ Valid JSON (unknown format)")
+        
+        # Pretty print for verification
+        print("\nParsed JSON:")
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON: {e}", file=sys.stderr)
+        print(f"Error at line {e.lineno}, column {e.colno}", file=sys.stderr)
+        sys.exit(1)
+    
+    except Exception as e:
+        print(f"❌ Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

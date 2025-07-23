@@ -1,0 +1,173 @@
+#!/bin/bash
+# Calendar creation test for cal-create-cal tool
+# Tests: create calendar, ignore exists, duplicate handling
+# Note: Calendar deletion removed due to macOS security restrictions
+
+set -e  # Exit on any error
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Load shared utilities
+source "$SCRIPT_DIR/lib/test-utils.sh"
+
+# Load test configuration
+source "$SCRIPT_DIR/lib/test-config.sh"
+
+# Use different naming pattern to avoid collision with main test suite
+TEST_CALENDAR="APPLE_CAL_CLI_CREATE_TEST_$$_SAFE_TO_DELETE"
+TEST_CALENDAR_DESC="${TEST_CALENDAR}_WITH_DESC"
+
+# Note: No cleanup function since we can't reliably delete calendars
+# Created calendars need to be manually deleted through Calendar app
+
+echo "=== Calendar Creation Test ==="
+echo "Test Calendar: $TEST_CALENDAR"
+echo "Test Calendar with Description: $TEST_CALENDAR_DESC"
+echo ""
+echo "⚠️  Note: Created calendars will need manual cleanup through Calendar app"
+echo "   due to macOS security restrictions on programmatic calendar deletion"
+echo ""
+
+# Test 1: Create calendar without description
+print_test "Creating calendar without description"
+if result=$("$CLI_DIR/cal-create-cal" "$TEST_CALENDAR" 2>&1); then
+    if validate_json_response "$result" "$SCRIPT_DIR"; then
+        if echo "$result" | grep -q '"status": "created"'; then
+            print_pass "Calendar created successfully"
+        else
+            print_fail "Unexpected calendar creation result: $result"
+        fi
+    else
+        print_fail "Invalid JSON from cal-create-cal: $result"
+    fi
+else
+    print_fail "Failed to create calendar: $result"
+fi
+
+# Test 2: Attempt to create duplicate calendar (should fail)
+print_test "Attempting to create duplicate calendar (should fail)"
+if result=$("$CLI_DIR/cal-create-cal" "$TEST_CALENDAR" 2>&1); then
+    if validate_json_response "$result" "$SCRIPT_DIR"; then
+        if echo "$result" | grep -q '"error"'; then
+            print_pass "Duplicate calendar creation properly rejected"
+        else
+            print_fail "Duplicate creation should have failed: $result"
+        fi
+    else
+        print_fail "Invalid JSON from duplicate creation attempt: $result"
+    fi
+else
+    print_fail "Unexpected error handling duplicate creation: $result"
+fi
+
+# Test 3: Create duplicate calendar with --ignore-exists
+print_test "Creating duplicate calendar with --ignore-exists"
+if result=$("$CLI_DIR/cal-create-cal" "$TEST_CALENDAR" --ignore-exists 2>&1); then
+    if validate_json_response "$result" "$SCRIPT_DIR"; then
+        if echo "$result" | grep -q '"status": "exists"'; then
+            print_pass "Duplicate calendar ignored successfully"
+        else
+            print_fail "--ignore-exists didn't work as expected: $result"
+        fi
+    else
+        print_fail "Invalid JSON from --ignore-exists: $result"
+    fi
+else
+    print_fail "Failed to handle --ignore-exists: $result"
+fi
+
+# Test 4: Create calendar with description
+print_test "Creating calendar with description"
+if result=$("$CLI_DIR/cal-create-cal" "$TEST_CALENDAR_DESC" "Test calendar with description" 2>&1); then
+    if validate_json_response "$result" "$SCRIPT_DIR"; then
+        if echo "$result" | grep -q '"status": "created"'; then
+            print_pass "Calendar with description created successfully"
+        else
+            print_fail "Calendar with description not created properly: $result"
+        fi
+    else
+        print_fail "Invalid JSON from calendar with description: $result"
+    fi
+else
+    print_fail "Failed to create calendar with description: $result"
+fi
+
+# Test 5: Verify calendars appear in cal-list
+print_test "Verifying calendars appear in cal-list"
+if result=$("$CLI_DIR/cal-list" 2>&1); then
+    if validate_json_response "$result" "$SCRIPT_DIR"; then
+        calendar_found=false
+        desc_calendar_found=false
+        
+        if echo "$result" | grep -q "$TEST_CALENDAR"; then
+            calendar_found=true
+        fi
+        
+        if echo "$result" | grep -q "$TEST_CALENDAR_DESC"; then
+            desc_calendar_found=true
+        fi
+        
+        if [[ "$calendar_found" == true && "$desc_calendar_found" == true ]]; then
+            print_pass "Test calendars found in listing"
+        else
+            print_fail "Test calendars not found in cal-list output"
+        fi
+    else
+        print_fail "Invalid JSON from cal-list: $result"
+    fi
+else
+    print_fail "Failed to list calendars: $result"
+fi
+
+# Test 6: Test error handling with invalid calendar name
+print_test "Testing error handling with invalid calendar name"
+invalid_name="INVALID_CALENDAR_NAME_WITHOUT_SAFETY_KEYWORDS"
+if result=$("$CLI_DIR/cal-create-cal" "$invalid_name" 2>&1); then
+    if echo "$result" | grep -q "error"; then
+        print_pass "Invalid calendar name properly rejected"
+    else
+        print_fail "Invalid calendar name should have been rejected: $result"
+    fi
+else
+    print_fail "Unexpected behavior with invalid calendar name"
+fi
+
+# Test 7: Testing cal-format with calendar creation
+print_test "Testing cal-format with calendar creation"
+temp_calendar="APPLE_CAL_CLI_CREATE_TEST_TEMP_$$_SAFE_TO_DELETE"
+if result=$("$CLI_DIR/cal-create-cal" "$temp_calendar" --ignore-exists | "$CLI_DIR/cal-format" 2>&1); then
+    if echo "$result" | grep -q "Calendar"; then
+        print_pass "cal-format handles calendar creation output"
+    else
+        print_fail "cal-format unexpected output: $result"
+    fi
+else
+    print_fail "Failed to test cal-format with calendar creation: $result"
+fi
+
+# Summary
+print_test_summary
+
+echo ""
+echo "📋 Manual Cleanup Required"
+echo "========================="
+echo "The following calendars were created and need manual deletion:"
+echo "• $TEST_CALENDAR"
+echo "• $TEST_CALENDAR_DESC" 
+echo "• $temp_calendar"
+echo ""
+echo "To delete these calendars:"
+echo "1. Open Calendar app"
+echo "2. Right-click each calendar in the sidebar"
+echo "3. Select 'Delete Calendar'"
+echo ""
+echo "This manual step is required due to macOS security restrictions."
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+    echo ""
+    echo "✅ All calendar creation tests passed!"
+else
+    echo ""
+    echo "❌ Some calendar creation tests failed!"
+fi

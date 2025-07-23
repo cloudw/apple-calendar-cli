@@ -1,0 +1,117 @@
+#!/usr/bin/osascript
+-- Setup and teardown test calendar for calendar CLI testing
+-- Usage: ./cal-test-setup create|delete [calendar_name]
+-- Creates/deletes a test calendar with safe naming convention
+
+on run argv
+    if length of argv < 1 then
+        return "{\"error\": \"Usage: cal-test-setup create|delete [calendar_name]\"}"
+    end if
+    
+    set action to item 1 of argv
+    
+    -- Use provided calendar name or generate a safe default
+    if length of argv ≥ 2 then
+        set testCalendarName to item 2 of argv
+        -- Safety check: ensure provided name is a test calendar
+        if not (testCalendarName contains "APPLE_CAL_CLI_TEST" and testCalendarName contains "SAFE_TO_DELETE") then
+            return "{\"error\": \"Provided calendar name must contain 'APPLE_CAL_CLI_TEST' and 'SAFE_TO_DELETE' for safety\"}"
+        end if
+    else
+        -- Generate unique test calendar name
+        -- Format: APPLE_CAL_CLI_TEST_DEFAULT_[RANDOM]_SAFE_TO_DELETE
+        set randomNum to (random number from 1000 to 9999) as string
+        set testCalendarName to "APPLE_CAL_CLI_TEST_DEFAULT_" & randomNum & "_SAFE_TO_DELETE"
+    end if
+    
+    try
+        if action is "create" then
+            set result to createTestCalendar(testCalendarName)
+            return result
+        else if action is "delete" then
+            set result to deleteTestCalendar(testCalendarName)
+            return result
+        else
+            return "{\"error\": \"Invalid action. Use 'create' or 'delete'\"}"
+        end if
+    on error errMsg
+        return "{\"error\": \"" & escapeJSONString(errMsg) & "\"}"
+    end try
+end run
+
+on createTestCalendar(calendarName)
+    tell application "Calendar"
+        try
+            -- Check if calendar already exists
+            set existingCalendars to name of calendars
+            if existingCalendars contains calendarName then
+                return "{\"status\": \"exists\", \"message\": \"Test calendar '" & calendarName & "' already exists\"}"
+            end if
+            
+            -- Create new calendar
+            set newCalendar to make new calendar with properties {name:calendarName, description:"Temporary calendar for CLI testing"}
+            
+            return "{\"status\": \"created\", \"calendar\": \"" & calendarName & "\", \"message\": \"Test calendar created successfully\"}"
+        on error errMsg
+            error "Failed to create test calendar: " & errMsg
+        end try
+    end tell
+end createTestCalendar
+
+on deleteTestCalendar(calendarName)
+    tell application "Calendar"
+        try
+            -- Find and delete the test calendar
+            set foundCalendar to false
+            repeat with cal in calendars
+                if name of cal is calendarName then
+                    delete cal
+                    set foundCalendar to true
+                    exit repeat
+                end if
+            end repeat
+            
+            if foundCalendar then
+                return "{\"status\": \"deleted\", \"calendar\": \"" & calendarName & "\", \"message\": \"Test calendar deleted successfully\"}"
+            else
+                return "{\"status\": \"not_found\", \"calendar\": \"" & calendarName & "\", \"message\": \"Test calendar not found\"}"
+            end if
+        on error errMsg
+            error "Failed to delete test calendar: " & errMsg
+        end try
+    end tell
+end deleteTestCalendar
+
+on escapeJSONString(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString as string
+    
+    -- Escape JSON special characters
+    set escapedString to cleanedString
+    
+    -- Replace backslashes first (must be first)
+    set escapedString to my replaceText(escapedString, "\\", "\\\\")
+    
+    -- Replace quotes
+    set escapedString to my replaceText(escapedString, "\"", "\\\"")
+    
+    -- Replace newlines and returns
+    set escapedString to my replaceText(escapedString, return, "\\n")
+    set escapedString to my replaceText(escapedString, linefeed, "\\n")
+    
+    -- Replace tabs
+    set escapedString to my replaceText(escapedString, tab, "\\t")
+    
+    return escapedString
+end escapeJSONString
+
+on replaceText(inputString, searchString, replaceString)
+    set AppleScript's text item delimiters to searchString
+    set textItems to text items of inputString
+    set AppleScript's text item delimiters to replaceString
+    set outputString to textItems as string
+    set AppleScript's text item delimiters to ""
+    return outputString
+end replaceText

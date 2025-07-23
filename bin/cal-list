@@ -1,0 +1,82 @@
+#!/usr/bin/osascript
+-- List available calendars
+-- Usage: ./cal-list
+-- Output: JSON array of calendar names
+
+on run argv
+    try
+        set calendarNames to get_calendar_names()
+        set jsonOutput to format_calendar_list(calendarNames)
+        return jsonOutput
+    on error errMsg
+        return "{\"error\": \"" & escapeJSONString(errMsg) & "\"}"
+    end try
+end run
+
+on get_calendar_names()
+    tell application "Calendar"
+        set calendarNames to {}
+        repeat with cal in calendars
+            set calendarNames to calendarNames & {name of cal}
+        end repeat
+        return calendarNames
+    end tell
+end get_calendar_names
+
+on format_calendar_list(calendarNames)
+    set jsonOutput to "{\"calendars\": ["
+    
+    if length of calendarNames is 0 then
+        set jsonOutput to jsonOutput & "]}"
+    else
+        repeat with i from 1 to length of calendarNames
+            set calName to item i of calendarNames
+            set jsonOutput to jsonOutput & "\"" & escapeJSONString(calName) & "\""
+            
+            if i < length of calendarNames then
+                set jsonOutput to jsonOutput & ","
+            end if
+        end repeat
+        
+        set jsonOutput to jsonOutput & "]}"
+    end if
+    
+    return jsonOutput
+end format_calendar_list
+
+on escapeJSONString(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString as string
+    
+    -- Escape JSON special characters
+    set escapedString to cleanedString
+    
+    -- Replace backslashes first (must be first)
+    set escapedString to my replaceText(escapedString, "\\", "\\\\")
+    
+    -- Replace quotes
+    set escapedString to my replaceText(escapedString, "\"", "\\\"")
+    
+    -- Replace newlines and returns
+    set escapedString to my replaceText(escapedString, return, "\\n")
+    set escapedString to my replaceText(escapedString, linefeed, "\\n")
+    
+    -- Replace tabs
+    set escapedString to my replaceText(escapedString, tab, "\\t")
+    
+    -- Replace other problematic characters
+    set escapedString to my replaceText(escapedString, "\r", "\\r")
+    
+    return escapedString
+end escapeJSONString
+
+on replaceText(inputString, searchString, replaceString)
+    set AppleScript's text item delimiters to searchString
+    set textItems to text items of inputString
+    set AppleScript's text item delimiters to replaceString
+    set outputString to textItems as string
+    set AppleScript's text item delimiters to ""
+    return outputString
+end replaceText

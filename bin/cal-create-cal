@@ -1,0 +1,128 @@
+#!/usr/bin/osascript
+-- Create a new calendar
+-- Usage: ./cal-create-cal <calendar_name> [description] [--ignore-exists]
+-- Options:
+--   --ignore-exists: Don't return error if calendar already exists
+-- Output: JSON object with creation status
+
+on run argv
+    if length of argv < 1 then
+        return "{\"error\": \"Usage: cal-create-cal <calendar_name> [description] [--ignore-exists]\"}"
+    end if
+    
+    try
+        set calendarName to item 1 of argv
+        set calendarDescription to ""
+        set ignoreExists to false
+        
+        -- Parse arguments
+        if length of argv ≥ 2 then
+            set secondArg to item 2 of argv
+            if secondArg is "--ignore-exists" then
+                set ignoreExists to true
+            else
+                set calendarDescription to secondArg
+            end if
+        end if
+        
+        if length of argv ≥ 3 then
+            set thirdArg to item 3 of argv
+            if thirdArg is "--ignore-exists" then
+                set ignoreExists to true
+            end if
+        end if
+        
+        set result to createCalendar(calendarName, calendarDescription, ignoreExists)
+        return result
+        
+    on error errMsg
+        return "{\"error\": \"" & escapeJSONString(errMsg) & "\"}"
+    end try
+end run
+
+on createCalendar(calendarName, calendarDescription, ignoreExists)
+    tell application "Calendar"
+        try
+            -- Check if calendar already exists
+            set existingCalendars to name of calendars
+            if existingCalendars contains calendarName then
+                if ignoreExists then
+                    return my formatCalendarResult("exists", calendarName, calendarDescription, "Calendar already exists (ignored)")
+                else
+                    error "Calendar '" & calendarName & "' already exists. Use --ignore-exists to suppress this error."
+                end if
+            end if
+            
+            -- Create new calendar
+            if calendarDescription is "" then
+                set newCalendar to make new calendar with properties {name:calendarName}
+            else
+                set newCalendar to make new calendar with properties {name:calendarName, description:calendarDescription}
+            end if
+            
+            return my formatCalendarResult("created", calendarName, calendarDescription, "Calendar created successfully")
+            
+        on error errMsg
+            error "Failed to create calendar: " & errMsg
+        end try
+    end tell
+end createCalendar
+
+on formatCalendarResult(status, calendarName, calendarDescription, message)
+    set calendarNameJSON to my escapeJSONString(calendarName)
+    set calendarDescJSON to my escapeJSONString(calendarDescription)
+    set messageJSON to my escapeJSONString(message)
+    
+    set jsonOutput to "{"
+    set jsonOutput to jsonOutput & "\"status\": \"" & status & "\","
+    set jsonOutput to jsonOutput & "\"calendar\": {"
+    set jsonOutput to jsonOutput & "\"name\": \"" & calendarNameJSON & "\","
+    set jsonOutput to jsonOutput & "\"description\": \"" & calendarDescJSON & "\""
+    set jsonOutput to jsonOutput & "},"
+    set jsonOutput to jsonOutput & "\"message\": \"" & messageJSON & "\""
+    set jsonOutput to jsonOutput & "}"
+    
+    return jsonOutput
+end formatCalendarResult
+
+on escapeJSONString(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString as string
+    
+    -- Limit length to prevent JSON corruption
+    if length of cleanedString > 500 then
+        set cleanedString to (characters 1 thru 500 of cleanedString as string) & "..."
+    end if
+    
+    -- Escape JSON special characters
+    set escapedString to cleanedString
+    
+    -- Replace backslashes first (must be first)
+    set escapedString to my replaceText(escapedString, "\\", "\\\\")
+    
+    -- Replace quotes
+    set escapedString to my replaceText(escapedString, "\"", "\\\"")
+    
+    -- Replace newlines and returns
+    set escapedString to my replaceText(escapedString, return, "\\n")
+    set escapedString to my replaceText(escapedString, linefeed, "\\n")
+    
+    -- Replace tabs
+    set escapedString to my replaceText(escapedString, tab, "\\t")
+    
+    -- Replace other problematic characters
+    set escapedString to my replaceText(escapedString, "\r", "\\r")
+    
+    return escapedString
+end escapeJSONString
+
+on replaceText(inputString, searchString, replaceString)
+    set AppleScript's text item delimiters to searchString
+    set textItems to text items of inputString
+    set AppleScript's text item delimiters to replaceString
+    set outputString to textItems as string
+    set AppleScript's text item delimiters to ""
+    return outputString
+end replaceText

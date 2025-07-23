@@ -1,0 +1,295 @@
+#!/usr/bin/osascript
+-- Get events from a calendar within a date range
+-- Usage: ./cal-get <calendar_name> <start_date> <end_date>
+-- Date format: YYYY-MM-DD or YYYY-MM-DD-HH-MM
+-- Output: JSON object with events array
+
+on run argv
+    if length of argv < 3 then
+        return "{\"error\": \"Usage: cal-get <calendar_name> <start_date> <end_date>\"}"
+    end if
+    
+    try
+        set calendarName to item 1 of argv
+        set startDateStr to item 2 of argv
+        set endDateStr to item 3 of argv
+        
+        set startDate to parse_date(startDateStr)
+        set endDate to parse_date(endDateStr)
+        
+        set eventRecords to get_events(calendarName, startDate, endDate)
+        set jsonOutput to format_events_for_display(eventRecords)
+        
+        return jsonOutput
+    on error errMsg
+        return "{\"error\": \"" & escapeJSONString(errMsg) & "\"}"
+    end try
+end run
+
+on parse_date(dateStr)
+    set dateComponents to my splitString(dateStr, "-")
+    
+    if length of dateComponents < 3 then
+        error "Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD-HH-MM"
+    end if
+    
+    set yearNum to (item 1 of dateComponents) as integer
+    set monthNum to (item 2 of dateComponents) as integer
+    set dayNum to (item 3 of dateComponents) as integer
+    
+    set hourNum to 0
+    set minuteNum to 0
+    
+    if length of dateComponents ≥ 4 then
+        set hourNum to (item 4 of dateComponents) as integer
+    end if
+    
+    if length of dateComponents ≥ 5 then
+        set minuteNum to (item 5 of dateComponents) as integer
+    end if
+    
+    return make_date(yearNum, monthNum, dayNum, hourNum, minuteNum)
+end parse_date
+
+on make_date(yearNum, monthNum, dayNum, hourNum, minuteNum)
+    set newDate to current date
+    set year of newDate to yearNum
+    set month of newDate to monthNum
+    set day of newDate to dayNum
+    set hours of newDate to hourNum
+    set minutes of newDate to minuteNum
+    set seconds of newDate to 0
+    return newDate
+end make_date
+
+on get_events(calendarName, startDate, endDate)
+    tell application "Calendar"
+        tell calendar calendarName
+            set eventList to every event whose start date ≥ startDate and start date ≤ endDate
+            
+            set eventRecords to {}
+            repeat with currentEvent in eventList
+                try
+                    set eventRecord to {eventStart:start date of currentEvent, eventEnd:end date of currentEvent, eventTitle:summary of currentEvent}
+                    try
+                        set eventDesc to description of currentEvent
+                        if eventDesc is not "" then
+                            set eventRecord to eventRecord & {eventDesc:eventDesc}
+                        else
+                            set eventRecord to eventRecord & {eventDesc:""}
+                        end if
+                    on error
+                        set eventRecord to eventRecord & {eventDesc:""}
+                    end try
+                    set eventRecords to eventRecords & {eventRecord}
+                on error
+                    -- Skip events that can't be accessed
+                end try
+            end repeat
+        end tell
+        return eventRecords
+    end tell
+end get_events
+
+on format_events_for_display(eventList)
+    set jsonOutput to "{\"events\": ["
+    
+    if length of eventList is 0 then
+        set jsonOutput to jsonOutput & "]}"
+    else
+        repeat with i from 1 to length of eventList
+            set eventRecord to item i of eventList
+            
+            set eventStart to eventStart of eventRecord
+            set eventEnd to eventEnd of eventRecord
+            set eventTitle to eventTitle of eventRecord
+            set eventDesc to eventDesc of eventRecord
+            
+            set startDateISO to my formatDateISO(eventStart)
+            set endDateISO to my formatDateISO(eventEnd)
+            
+            -- More aggressive cleaning and escaping
+            set eventTitleJSON to my cleanAndEscapeJSON(eventTitle)
+            set eventDescJSON to my cleanAndEscapeJSON(eventDesc)
+            
+            set eventJSON to "{"
+            set eventJSON to eventJSON & "\"title\": \"" & eventTitleJSON & "\","
+            set eventJSON to eventJSON & "\"description\": \"" & eventDescJSON & "\","
+            set eventJSON to eventJSON & "\"startDate\": \"" & startDateISO & "\","
+            set eventJSON to eventJSON & "\"endDate\": \"" & endDateISO & "\""
+            set eventJSON to eventJSON & "}"
+            
+            set jsonOutput to jsonOutput & eventJSON
+            
+            if i < length of eventList then
+                set jsonOutput to jsonOutput & ","
+            end if
+        end repeat
+        
+        set jsonOutput to jsonOutput & "]}"
+    end if
+    
+    return jsonOutput
+end format_events_for_display
+
+on formatDateISO(dateValue)
+    set yearStr to year of dateValue as string
+    set monthNum to month of dateValue as integer
+    set dayNum to day of dateValue
+    set hourNum to hours of dateValue
+    set minNum to minutes of dateValue
+    set secNum to seconds of dateValue
+    
+    if monthNum < 10 then set monthStr to "0" & monthNum
+    if monthNum ≥ 10 then set monthStr to monthNum as string
+    if dayNum < 10 then set dayStr to "0" & dayNum
+    if dayNum ≥ 10 then set dayStr to dayNum as string
+    if hourNum < 10 then set hourStr to "0" & hourNum
+    if hourNum ≥ 10 then set hourStr to hourNum as string
+    if minNum < 10 then set minStr to "0" & minNum
+    if minNum ≥ 10 then set minStr to minNum as string
+    if secNum < 10 then set secStr to "0" & secNum
+    if secNum ≥ 10 then set secStr to secNum as string
+    
+    -- Add timezone offset (system timezone)
+    set gmtOffset to time to GMT
+    set offsetHours to gmtOffset div 3600
+    set offsetMinutes to (gmtOffset mod 3600) div 60
+    if offsetHours ≥ 0 then
+        set offsetSign to "+"
+    else
+        set offsetSign to "-"
+        set offsetHours to -offsetHours
+    end if
+    
+    if offsetHours < 10 then set offsetHoursStr to "0" & offsetHours as string
+    if offsetHours ≥ 10 then set offsetHoursStr to offsetHours as string
+    if offsetMinutes < 10 then set offsetMinutesStr to "0" & offsetMinutes as string
+    if offsetMinutes ≥ 10 then set offsetMinutesStr to offsetMinutes as string
+    
+    set timezoneOffset to offsetSign & offsetHoursStr & ":" & offsetMinutesStr
+    
+    return yearStr & "-" & monthStr & "-" & dayStr & "T" & hourStr & ":" & minStr & ":" & secStr & timezoneOffset
+end formatDateISO
+
+on cleanAndEscapeJSON(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString as string
+    
+    -- Remove HTML tags (basic cleanup)
+    set cleanedString to my removeHTMLTags(cleanedString)
+    
+    -- Limit length to prevent JSON corruption
+    if length of cleanedString > 1000 then
+        set cleanedString to (characters 1 thru 1000 of cleanedString as string) & "..."
+    end if
+    
+    -- Escape JSON special characters
+    set escapedString to cleanedString
+    
+    -- Replace backslashes first (must be first)
+    set escapedString to my replaceText(escapedString, "\\", "\\\\")
+    
+    -- Replace quotes
+    set escapedString to my replaceText(escapedString, "\"", "\\\"")
+    
+    -- Replace newlines and returns
+    set escapedString to my replaceText(escapedString, return, "\\n")
+    set escapedString to my replaceText(escapedString, linefeed, "\\n")
+    
+    -- Replace tabs
+    set escapedString to my replaceText(escapedString, tab, "\\t")
+    
+    -- Replace other problematic characters
+    set escapedString to my replaceText(escapedString, "\r", "\\r")
+    
+    return escapedString
+end cleanAndEscapeJSON
+
+on removeHTMLTags(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString
+    
+    -- Basic HTML tag removal (simple approach)
+    -- Remove <tag> and </tag> patterns
+    repeat
+        set tagStart to 0
+        set tagEnd to 0
+        
+        -- Find opening <
+        repeat with i from 1 to length of cleanedString
+            if character i of cleanedString is "<" then
+                set tagStart to i
+                exit repeat
+            end if
+        end repeat
+        
+        if tagStart is 0 then exit repeat
+        
+        -- Find closing >
+        repeat with i from tagStart to length of cleanedString
+            if character i of cleanedString is ">" then
+                set tagEnd to i
+                exit repeat
+            end if
+        end repeat
+        
+        if tagEnd is 0 then exit repeat
+        
+        -- Remove the tag
+        if tagStart is 1 then
+            if tagEnd is length of cleanedString then
+                set cleanedString to ""
+            else
+                set cleanedString to (characters (tagEnd + 1) thru -1 of cleanedString) as string
+            end if
+        else if tagEnd is length of cleanedString then
+            set cleanedString to (characters 1 thru (tagStart - 1) of cleanedString) as string
+        else
+            set cleanedString to (characters 1 thru (tagStart - 1) of cleanedString) as string & (characters (tagEnd + 1) thru -1 of cleanedString) as string
+        end if
+    end repeat
+    
+    -- Clean up HTML entities (basic ones)
+    set cleanedString to my replaceText(cleanedString, "&nbsp;", " ")
+    set cleanedString to my replaceText(cleanedString, "&amp;", "&")
+    set cleanedString to my replaceText(cleanedString, "&lt;", "<")
+    set cleanedString to my replaceText(cleanedString, "&gt;", ">")
+    set cleanedString to my replaceText(cleanedString, "&quot;", "\"")
+    set cleanedString to my replaceText(cleanedString, "&#39;", "'")
+    set cleanedString to my replaceText(cleanedString, "<br>", " ")
+    set cleanedString to my replaceText(cleanedString, "<br/>", " ")
+    set cleanedString to my replaceText(cleanedString, "<br />", " ")
+    
+    -- Clean up multiple spaces and newlines
+    repeat while cleanedString contains "  "
+        set cleanedString to my replaceText(cleanedString, "  ", " ")
+    end repeat
+    
+    return cleanedString
+end removeHTMLTags
+
+on escapeJSONString(inputString)
+    -- Keep this for backward compatibility
+    return my cleanAndEscapeJSON(inputString)
+end escapeJSONString
+
+on replaceText(inputString, searchString, replaceString)
+    set AppleScript's text item delimiters to searchString
+    set textItems to text items of inputString
+    set AppleScript's text item delimiters to replaceString
+    set outputString to textItems as string
+    set AppleScript's text item delimiters to ""
+    return outputString
+end replaceText
+
+on splitString(inputString, delimiter)
+    set AppleScript's text item delimiters to delimiter
+    set stringItems to text items of inputString
+    set AppleScript's text item delimiters to ""
+    return stringItems
+end splitString

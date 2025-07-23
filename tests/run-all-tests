@@ -1,0 +1,62 @@
+#!/bin/bash
+# Run all calendar CLI tests
+# Main test runner that executes all test suites with comprehensive safety checks
+
+set -e  # Exit on any error
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load shared utilities
+source "$SCRIPT_DIR/lib/test-utils.sh"
+
+# Load test configuration for safety functions
+source "$SCRIPT_DIR/lib/test-config.sh"
+
+# Note: Calendar deletion removed due to macOS security restrictions
+# Tests now use persistent calendars and only clean up events
+
+echo "=== Calendar CLI Test Suite Runner ==="
+echo "Test Directory: $SCRIPT_DIR"
+echo ""
+print_test_config
+echo ""
+echo "Starting comprehensive test run..."
+
+# Check prerequisites
+echo ""
+echo -e "${YELLOW}[CHECK]${NC} Verifying test prerequisites..."
+
+# Check if Calendar app is available
+if ! osascript -e 'tell application "Calendar" to get name' > /dev/null 2>&1; then
+    echo -e "${RED}[ERROR]${NC} Calendar app is not accessible"
+    exit 1
+fi
+
+# Check if parent CLI tools exist
+CLI_DIR="$(dirname "$SCRIPT_DIR")/bin"
+required_tools=("cal-list" "cal-get" "cal-add" "cal-delete" "cal-format" "cal-create-cal")
+for tool in "${required_tools[@]}"; do
+    if [ ! -x "$CLI_DIR/$tool" ]; then
+        echo -e "${RED}[ERROR]${NC} Required tool $tool not found or not executable"
+        exit 1
+    fi
+done
+
+echo -e "${GREEN}[CHECK]${NC} All prerequisites satisfied"
+
+# Run test suites
+echo ""
+echo "=== Running Test Suites ==="
+
+# Core functionality test suites
+run_test_suite "test-events" "Event Operations Test" "$SCRIPT_DIR"
+run_test_suite "test-calendars" "Calendar Operations Test" "$SCRIPT_DIR"
+run_test_suite "test-formats" "Content Formatting & Edge Cases Test" "$SCRIPT_DIR"
+run_test_suite "test-errors" "Error Handling Test" "$SCRIPT_DIR"
+
+# Future test suites can be added here
+# run_test_suite "test-performance" "Performance Test"
+# run_test_suite "test-edge-cases" "Edge Cases Test"
+
+# Final summary
+print_suite_summary

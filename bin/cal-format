@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""
+Calendar JSON formatter - converts JSON output from calendar CLI tools to human-readable formats
+
+Supports timezone-aware ISO 8601 datetime formats from the calendar CLI tools.
+All times are displayed in the system timezone as provided by the CLI tools.
+
+Usage: 
+  ./cal-format [--format table|agenda|summary] < input.json
+  ./cal-get "Calendar Name" $(date +%Y-%m-%d) $(date -d '+1 day' +%Y-%m-%d) | ./cal-format --format agenda
+"""
+
+import json
+import sys
+import argparse
+from datetime import datetime
+from typing import Dict, List, Any
+
+def parse_iso_date(date_str: str) -> datetime:
+    """Parse ISO date string to datetime object (with timezone support)"""
+    # Handle both with and without timezone info
+    if 'T' in date_str:
+        try:
+            # Try parsing with fromisoformat (supports timezone)
+            return datetime.fromisoformat(date_str)
+        except:
+            try:
+                # Fallback: parse without timezone info
+                clean_date = date_str.split('+')[0].split('-')[0:3]  # Remove timezone part if present
+                if len(date_str.split('T')) > 1:
+                    time_part = date_str.split('T')[1].split('+')[0].split('-')[0]
+                    return datetime.fromisoformat(clean_date[0] + '-' + clean_date[1] + '-' + clean_date[2] + 'T' + time_part)
+                else:
+                    return datetime.strptime(date_str.split('T')[0] + ' ' + date_str.split('T')[1], '%Y-%m-%d %H:%M:%S')
+            except:
+                # Final fallback
+                date_part = date_str.split('T')[0]
+                time_part = date_str.split('T')[1].split('+')[0].split('-')[0] if 'T' in date_str else '00:00:00'
+                return datetime.strptime(date_part + ' ' + time_part, '%Y-%m-%d %H:%M:%S')
+    else:
+        return datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+
+def format_datetime(dt: datetime, time_format: str = "12h") -> tuple:
+    """Format datetime to readable date and time strings"""
+    date_str = dt.strftime("%A, %B %d, %Y")
+    if time_format == "12h":
+        time_str = dt.strftime("%I:%M %p").lstrip('0')
+    else:
+        time_str = dt.strftime("%H:%M")
+    return date_str, time_str
+
+def format_events_table(events: List[Dict[str, Any]]) -> str:
+    """Format events as a table"""
+    if not events:
+        return "No events found."
+    
+    output = []
+    output.append("┌─" + "─" * 50 + "─┬─" + "─" * 20 + "─┬─" + "─" * 20 + "─┐")
+    output.append("│ {:<50} │ {:<20} │ {:<20} │".format("Title", "Start", "End"))
+    output.append("├─" + "─" * 50 + "─┼─" + "─" * 20 + "─┼─" + "─" * 20 + "─┤")
+    
+    for event in events:
+        title = event.get('title', 'Untitled')[:50]
+        
+        start_dt = parse_iso_date(event.get('startDate', ''))
+        end_dt = parse_iso_date(event.get('endDate', ''))
+        
+        _, start_time = format_datetime(start_dt)
+        _, end_time = format_datetime(end_dt)
+        
+        output.append("│ {:<50} │ {:<20} │ {:<20} │".format(title, start_time, end_time))
+    
+    output.append("└─" + "─" * 50 + "─┴─" + "─" * 20 + "─┴─" + "─" * 20 + "─┘")
+    return "\n".join(output)
+
+def format_events_agenda(events: List[Dict[str, Any]]) -> str:
+    """Format events as an agenda/timeline"""
+    if not events:
+        return "No events found."
+    
+    # Group events by date
+    events_by_date = {}
+    for event in events:
+        start_dt = parse_iso_date(event.get('startDate', ''))
+        date_key = start_dt.strftime("%Y-%m-%d")
+        
+        if date_key not in events_by_date:
+            events_by_date[date_key] = []
+        events_by_date[date_key].append(event)
+    
+    output = []
+    for date_key in sorted(events_by_date.keys()):
+        date_dt = datetime.strptime(date_key, "%Y-%m-%d")
+        date_str, _ = format_datetime(date_dt)
+        
+        output.append(f"\n📅 {date_str}")
+        output.append("=" * (len(date_str) + 3))
+        
+        # Sort events by start time
+        day_events = sorted(events_by_date[date_key], 
+                          key=lambda x: parse_iso_date(x.get('startDate', '')))
+        
+        for event in day_events:
+            start_dt = parse_iso_date(event.get('startDate', ''))
+            end_dt = parse_iso_date(event.get('endDate', ''))
+            
+            _, start_time = format_datetime(start_dt)
+            _, end_time = format_datetime(end_dt)
+            
+            title = event.get('title', 'Untitled')
+            description = event.get('description', '').strip()
+            
+            output.append(f"  🕐 {start_time} - {end_time}")
+            output.append(f"     {title}")
+            
+            if description:
+                # Wrap description
+                desc_lines = description.split('\n')
+                for line in desc_lines:
+                    if line.strip():
+                        output.append(f"     📝 {line.strip()}")
+            output.append("")
+    
+    return "\n".join(output)
+
+def format_events_summary(events: List[Dict[str, Any]]) -> str:
+    """Format events as a summary"""
+    if not events:
+        return "No events found."
+    
+    total_events = len(events)
+    
+    # Calculate date range
+    if events:
+        start_dates = [parse_iso_date(event.get('startDate', '')) for event in events]
+        earliest = min(start_dates)
+        latest = max(start_dates)
+        
+        earliest_str, _ = format_datetime(earliest)
+        latest_str, _ = format_datetime(latest)
+        
+        if earliest.date() == latest.date():
+            date_range = earliest_str
+        else:
+            date_range = f"{earliest_str} to {latest_str}"
+    else:
+        date_range = "No dates"
+    
+    output = []
+    output.append("📊 Calendar Summary")
+    output.append("=" * 18)
+    output.append(f"Total Events: {total_events}")
+    output.append(f"Date Range: {date_range}")
+    output.append("")
+    
+    if events:
+        output.append("📋 Event List:")
+        for i, event in enumerate(events, 1):
+            title = event.get('title', 'Untitled')
+            start_dt = parse_iso_date(event.get('startDate', ''))
+            _, start_time = format_datetime(start_dt)
+            output.append(f"  {i}. {title} ({start_time})")
+    
+    return "\n".join(output)
+
+def format_calendar_list(calendars: List[str]) -> str:
+    """Format calendar list in human-readable format"""
+    if not calendars:
+        return "No calendars found."
+    
+    output = []
+    output.append("📅 Available Calendars")
+    output.append("=" * 21)
+    
+    for i, calendar in enumerate(calendars, 1):
+        output.append(f"  {i}. {calendar}")
+    
+    return "\n".join(output)
+
+def format_operation_result(data: Dict[str, Any]) -> str:
+    """Format create/delete operation results"""
+    status = data.get('status', '')
+    
+    # Event operations
+    if status == 'created' and 'event' in data:
+        event = data.get('event', {})
+        title = event.get('title', 'Untitled')
+        start_dt = parse_iso_date(event.get('startDate', ''))
+        date_str, time_str = format_datetime(start_dt)
+        
+        return f"✅ Event Created Successfully\n" \
+               f"   Title: {title}\n" \
+               f"   Date: {date_str}\n" \
+               f"   Time: {time_str}"
+    
+    elif status == 'deleted' and 'eventsDeleted' in data:
+        title = data.get('eventTitle', 'Unknown')
+        count = data.get('eventsDeleted', 0)
+        
+        if count == 0:
+            return f"ℹ️  No events found matching '{title}'"
+        elif count == 1:
+            return f"🗑️  Deleted 1 event: '{title}'"
+        else:
+            return f"🗑️  Deleted {count} events matching: '{title}'"
+    
+    # Calendar operations
+    elif status in ['created', 'exists'] and 'calendar' in data:
+        calendar_info = data.get('calendar', {})
+        if isinstance(calendar_info, dict):
+            cal_name = calendar_info.get('name', 'Unknown')
+            cal_desc = calendar_info.get('description', '')
+        else:
+            cal_name = str(calendar_info)
+            cal_desc = ''
+        
+        message = data.get('message', '')
+        
+        if status == 'created':
+            result = f"✅ Calendar Created Successfully\n   Name: {cal_name}"
+        else:
+            result = f"ℹ️  Calendar Already Exists\n   Name: {cal_name}"
+        
+        if cal_desc:
+            result += f"\n   Description: {cal_desc}"
+        
+        if message:
+            result += f"\n   {message}"
+        
+        return result
+    
+    elif status == 'deleted' and 'calendar' in data:
+        cal_name = data.get('calendar', 'Unknown')
+        message = data.get('message', '')
+        
+        result = f"🗑️  Calendar Deleted Successfully\n   Name: {cal_name}"
+        if message:
+            result += f"\n   {message}"
+        
+        return result
+    
+    elif status == 'not_found' and 'calendar' in data:
+        cal_name = data.get('calendar', 'Unknown')
+        return f"❌ Calendar Not Found: {cal_name}"
+    
+    elif status == 'cancelled' and 'calendar' in data:
+        cal_name = data.get('calendar', 'Unknown')
+        return f"⏹️  Calendar Deletion Cancelled: {cal_name}"
+    
+    return str(data)
+
+def main():
+    parser = argparse.ArgumentParser(description='Format calendar JSON output')
+    parser.add_argument('--format', '-f', 
+                       choices=['table', 'agenda', 'summary'], 
+                       default='agenda',
+                       help='Output format (default: agenda)')
+    
+    args = parser.parse_args()
+    
+    try:
+        # Read JSON from stdin
+        input_data = sys.stdin.read().strip()
+        if not input_data:
+            print("Error: No input provided", file=sys.stderr)
+            sys.exit(1)
+        
+        data = json.loads(input_data)
+        
+        # Handle errors
+        if 'error' in data:
+            print(f"❌ Error: {data['error']}", file=sys.stderr)
+            sys.exit(1)
+        
+        # Handle different data types
+        if 'events' in data:
+            events = data['events']
+            if args.format == 'table':
+                print(format_events_table(events))
+            elif args.format == 'agenda':
+                print(format_events_agenda(events))
+            elif args.format == 'summary':
+                print(format_events_summary(events))
+        
+        elif 'calendars' in data:
+            calendars = data['calendars']
+            print(format_calendar_list(calendars))
+        
+        elif 'status' in data:
+            print(format_operation_result(data))
+        
+        else:
+            # Fallback for unknown formats
+            print(json.dumps(data, indent=2))
+    
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON input: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

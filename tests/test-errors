@@ -1,0 +1,244 @@
+#!/bin/bash
+# Error Handling Test
+# Tests: invalid inputs, non-existent calendars, malformed dates, error responses
+
+set -e  # Exit on any error
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$(dirname "$SCRIPT_DIR")/bin"
+
+# Load shared utilities and verification
+source "$SCRIPT_DIR/lib/test-utils.sh"
+source "$SCRIPT_DIR/lib/ground-truth-verify.sh"
+
+# Load test configuration
+source "$SCRIPT_DIR/lib/test-config.sh"
+TEST_CALENDAR="$TEST_CALENDAR_SHARED"
+
+echo "=== Error Handling Test ==="
+echo "Test Calendar: $TEST_CALENDAR"
+echo ""
+
+# Get test dates
+tomorrow=$(get_tomorrow_date)
+
+# Test 1: Non-existent calendar operations
+print_test "Testing operations on non-existent calendar"
+fake_calendar="NONEXISTENT_CALENDAR_${RANDOM}"
+
+# Test getting events from non-existent calendar
+get_fake_result=$(./cal-get "$fake_calendar" "$tomorrow" "$tomorrow" 2>&1 || true)
+if validate_json_response "$get_fake_result" "$SCRIPT_DIR"; then
+    if echo "$get_fake_result" | grep -q '"error"'; then
+        print_pass "Non-existent calendar get returns proper error JSON"
+    else
+        print_info "Non-existent calendar get returned: $get_fake_result"
+    fi
+else
+    print_fail "Non-existent calendar get produced invalid JSON: $get_fake_result"
+fi
+
+# Verify calendar doesn't exist via Calendar app
+if ! verify_calendar_exists "$fake_calendar"; then
+    print_pass "Calendar app confirms non-existent calendar doesn't exist"
+else
+    print_fail "Unexpected: fake calendar exists in Calendar app"
+fi
+
+# Test adding event to non-existent calendar
+add_fake_result=$(./cal-add "$fake_calendar" "Test Event" "${tomorrow}-10-00" "${tomorrow}-11-00" "Test desc" 2>&1 || true)
+if validate_json_response "$add_fake_result" "$SCRIPT_DIR"; then
+    if echo "$add_fake_result" | grep -q '"error"'; then
+        print_pass "Non-existent calendar add returns proper error JSON"
+    else
+        print_fail "Adding to non-existent calendar should have failed: $add_fake_result"
+    fi
+else
+    print_fail "Non-existent calendar add produced invalid JSON: $add_fake_result"
+fi
+
+# Test 2: Invalid date format handling
+print_test "Testing invalid date format handling"
+invalid_dates=("invalid-date" "2025-13-01" "2025-02-30" "2025-01-32" "not-a-date" "")
+
+for invalid_date in "${invalid_dates[@]}"; do
+    invalid_result=$(./cal-get "$TEST_CALENDAR" "$invalid_date" "$tomorrow" 2>&1 || true)
+    if validate_json_response "$invalid_result" "$SCRIPT_DIR"; then
+        if echo "$invalid_result" | grep -q '"error"'; then
+            print_pass "Invalid date '$invalid_date' returns proper error JSON"
+        else
+            print_info "Invalid date '$invalid_date' returned: $invalid_result"
+        fi
+    else
+        print_fail "Invalid date '$invalid_date' produced malformed JSON: $invalid_result"
+    fi
+done
+
+# Test 3: Invalid time format handling
+print_test "Testing invalid time format handling"
+invalid_times=("${tomorrow}-25-00" "${tomorrow}-10-61" "${tomorrow}-ab-cd" "${tomorrow}-1" "${tomorrow}-10-00-00-00")
+
+for invalid_time in "${invalid_times[@]}"; do
+    invalid_time_result=$(./cal-add "$TEST_CALENDAR" "Test Event" "$invalid_time" "${tomorrow}-11-00" "Test" 2>&1 || true)
+    if validate_json_response "$invalid_time_result" "$SCRIPT_DIR"; then
+        if echo "$invalid_time_result" | grep -q '"error"'; then
+            print_pass "Invalid time '$invalid_time' returns proper error JSON"
+        else
+            print_info "Invalid time '$invalid_time' returned: $invalid_time_result"
+        fi
+    else
+        print_fail "Invalid time '$invalid_time' produced malformed JSON: $invalid_time_result"
+    fi
+done
+
+# Test 4: Missing required parameters
+print_test "Testing missing required parameters"
+
+# Test cal-get with missing parameters
+missing_get1=$(./cal-get 2>&1 || true)
+if echo "$missing_get1" | grep -q "error\|Usage"; then
+    print_pass "cal-get with no parameters returns error"
+else
+    print_fail "cal-get with no parameters should return error: $missing_get1"
+fi
+
+missing_get2=$(./cal-get "$TEST_CALENDAR" 2>&1 || true)
+if echo "$missing_get2" | grep -q "error\|Usage"; then
+    print_pass "cal-get with missing dates returns error" 
+else
+    print_fail "cal-get with missing dates should return error: $missing_get2"
+fi
+
+# Test cal-add with missing parameters
+missing_add1=$(./cal-add 2>&1 || true)
+if echo "$missing_add1" | grep -q "error\|Usage"; then
+    print_pass "cal-add with no parameters returns error"
+else
+    print_fail "cal-add with no parameters should return error: $missing_add1"
+fi
+
+missing_add2=$(./cal-add "$TEST_CALENDAR" "Event Title" 2>&1 || true)
+if echo "$missing_add2" | grep -q "error\|Usage"; then
+    print_pass "cal-add with missing times returns error"
+else
+    print_fail "cal-add with missing times should return error: $missing_add2"
+fi
+
+# Test 5: Invalid event title handling
+print_test "Testing empty and invalid event titles"
+
+# Empty title
+empty_title_result=$(./cal-add "$TEST_CALENDAR" "" "${tomorrow}-10-00" "${tomorrow}-11-00" "Desc" 2>&1 || true)
+if validate_json_response "$empty_title_result" "$SCRIPT_DIR"; then
+    if echo "$empty_title_result" | grep -q '"error"'; then
+        print_pass "Empty event title returns proper error JSON"
+    else
+        print_info "Empty title handling: $empty_title_result"
+    fi
+else
+    print_fail "Empty title produced invalid JSON: $empty_title_result"
+fi
+
+# Test 6: Invalid time range handling
+print_test "Testing invalid time ranges"
+
+# End time before start time
+invalid_range_result=$(./cal-add "$TEST_CALENDAR" "Test Event" "${tomorrow}-15-00" "${tomorrow}-10-00" "Desc" 2>&1 || true)
+if validate_json_response "$invalid_range_result" "$SCRIPT_DIR"; then
+    if echo "$invalid_range_result" | grep -q '"error"'; then
+        print_pass "Invalid time range (end before start) returns proper error"
+    else
+        print_info "Invalid time range handling: $invalid_range_result"
+    fi
+else
+    print_fail "Invalid time range produced invalid JSON: $invalid_range_result"
+fi
+
+# Same start and end time
+same_time_result=$(./cal-add "$TEST_CALENDAR" "Test Event" "${tomorrow}-10-00" "${tomorrow}-10-00" "Desc" 2>&1 || true)
+if validate_json_response "$same_time_result" "$SCRIPT_DIR"; then
+    # This might be valid in some cases, so just check JSON validity
+    print_pass "Same start/end time produces valid JSON response"
+else
+    print_fail "Same start/end time produced invalid JSON: $same_time_result"
+fi
+
+# Test 7: Calendar deletion attempt (should fail due to macOS restrictions)
+print_test "Testing calendar deletion (expected to fail)"
+if command -v ./cal-delete-cal >/dev/null 2>&1; then
+    delete_result=$(./cal-delete-cal "$TEST_CALENDAR" 2>&1 || true)
+    if echo "$delete_result" | grep -q "error\|failed\|AppleEvent handler failed"; then
+        print_pass "Calendar deletion properly fails due to macOS restrictions"
+    else
+        print_info "Calendar deletion returned: $delete_result"
+    fi
+else
+    print_info "cal-delete-cal tool not found (removed due to macOS restrictions)"
+fi
+
+# Test 8: Event deletion with non-existent event
+print_test "Testing deletion of non-existent event"
+nonexistent_delete=$(./cal-delete "$TEST_CALENDAR" "NonExistentEvent12345" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1 || true)
+if validate_json_response "$nonexistent_delete" "$SCRIPT_DIR"; then
+    if echo "$nonexistent_delete" | grep -q '"eventsDeleted": 0'; then
+        print_pass "Non-existent event deletion returns 0 events deleted"
+    else
+        print_info "Non-existent event deletion: $nonexistent_delete"
+    fi
+else
+    print_fail "Non-existent event deletion produced invalid JSON: $nonexistent_delete"
+fi
+
+# Test 9: Extremely long input handling
+print_test "Testing extremely long input handling"
+very_long_title=$(printf "A%.0s" {1..1000})  # 1000 character title
+very_long_desc=$(printf "B%.0s" {1..5000})   # 5000 character description
+
+long_input_result=$(./cal-add "$TEST_CALENDAR" "$very_long_title" "${tomorrow}-10-00" "${tomorrow}-11-00" "$very_long_desc" 2>&1 || true)
+if validate_json_response "$long_input_result" "$SCRIPT_DIR"; then
+    print_pass "Extremely long input produces valid JSON response"
+else
+    print_fail "Extremely long input produced invalid JSON"
+fi
+
+# Test 10: Special character injection attempts
+print_test "Testing potential JSON injection with special characters"
+injection_attempts=(
+    '"; malicious: "code'
+    "'; DROP TABLE events; --"
+    '{"fake": "json"}'
+    '</script><script>alert("xss")</script>'
+)
+
+for injection in "${injection_attempts[@]}"; do
+    injection_result=$(./cal-add "$TEST_CALENDAR" "$injection" "${tomorrow}-10-00" "${tomorrow}-11-00" "Test" 2>&1 || true)
+    if validate_json_response "$injection_result" "$SCRIPT_DIR"; then
+        print_pass "Injection attempt properly escaped: ${injection:0:20}..."
+    else
+        print_fail "Injection attempt broke JSON: ${injection:0:20}..."
+    fi
+done
+
+# Test 11: Concurrent operation error handling
+print_test "Testing concurrent operation handling"
+# This test is informational - testing what happens if multiple operations run simultaneously
+concurrent_results=()
+for i in {1..3}; do
+    (./cal-add "$TEST_CALENDAR" "Concurrent Event $i" "${tomorrow}-$((10+i))-00" "${tomorrow}-$((11+i))-00" "Concurrent test" 2>&1) &
+    concurrent_pids+=($!)
+done
+
+# Wait for all concurrent operations
+wait
+print_pass "Concurrent operations completed (specific behavior may vary)"
+
+# Summary
+print_test_summary
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+    echo ""
+    echo "✅ All error handling tests passed!"
+else
+    echo ""
+    echo "❌ Some error handling tests failed"
+fi

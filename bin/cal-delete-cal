@@ -1,0 +1,139 @@
+#!/usr/bin/osascript
+-- Delete a calendar
+-- Usage: ./cal-delete-cal <calendar_name> [--force]
+-- Options:
+--   --force: Skip confirmation prompt and delete immediately
+-- Output: JSON object with deletion status
+
+on run argv
+    if length of argv < 1 then
+        return "{\"error\": \"Usage: cal-delete-cal <calendar_name> [--force]\"}"
+    end if
+    
+    try
+        set calendarName to item 1 of argv
+        set forceDelete to false
+        
+        -- Parse arguments
+        if length of argv ≥ 2 then
+            set secondArg to item 2 of argv
+            if secondArg is "--force" then
+                set forceDelete to true
+            end if
+        end if
+        
+        set result to deleteCalendar(calendarName, forceDelete)
+        return result
+        
+    on error errMsg
+        return "{\"error\": \"" & escapeJSONString(errMsg) & "\"}"
+    end try
+end run
+
+on deleteCalendar(calendarName, forceDelete)
+    tell application "Calendar"
+        try
+            -- Find the calendar by checking names first
+            set calendarNames to name of calendars
+            set foundCalendar to false
+            set targetCalendar to null
+            
+            repeat with i from 1 to count of calendarNames
+                if item i of calendarNames is calendarName then
+                    set targetCalendar to calendar i
+                    set foundCalendar to true
+                    exit repeat
+                end if
+            end repeat
+            
+            if not foundCalendar then
+                return my formatDeleteResult("not_found", calendarName, "Calendar not found")
+            end if
+            
+            -- Get event count for confirmation message
+            set eventCount to count of events in targetCalendar
+            
+            -- Confirmation prompt (unless --force is used)
+            if not forceDelete then
+                set confirmationMessage to "Are you sure you want to delete calendar '" & calendarName & "'?"
+                if eventCount > 0 then
+                    set confirmationMessage to confirmationMessage & " It contains " & eventCount & " events that will be permanently deleted."
+                end if
+                
+                set userChoice to display dialog confirmationMessage buttons {"Cancel", "Delete"} default button "Cancel" with icon caution
+                
+                if button returned of userChoice is not "Delete" then
+                    return my formatDeleteResult("cancelled", calendarName, "Calendar deletion cancelled by user")
+                end if
+            end if
+            
+            -- Perform deletion
+            delete targetCalendar
+            
+            set message to "Calendar deleted successfully"
+            if eventCount > 0 then
+                set message to message & " (removed " & eventCount & " events)"
+            end if
+            
+            return my formatDeleteResult("deleted", calendarName, message)
+            
+        on error errMsg
+            error "Failed to delete calendar: " & errMsg
+        end try
+    end tell
+end deleteCalendar
+
+on formatDeleteResult(status, calendarName, message)
+    set calendarNameJSON to my escapeJSONString(calendarName)
+    set messageJSON to my escapeJSONString(message)
+    
+    set jsonOutput to "{"
+    set jsonOutput to jsonOutput & "\"status\": \"" & status & "\","
+    set jsonOutput to jsonOutput & "\"calendar\": \"" & calendarNameJSON & "\","
+    set jsonOutput to jsonOutput & "\"message\": \"" & messageJSON & "\""
+    set jsonOutput to jsonOutput & "}"
+    
+    return jsonOutput
+end formatDeleteResult
+
+on escapeJSONString(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString as string
+    
+    -- Limit length to prevent JSON corruption
+    if length of cleanedString > 500 then
+        set cleanedString to (characters 1 thru 500 of cleanedString as string) & "..."
+    end if
+    
+    -- Escape JSON special characters
+    set escapedString to cleanedString
+    
+    -- Replace backslashes first (must be first)
+    set escapedString to my replaceText(escapedString, "\\", "\\\\")
+    
+    -- Replace quotes
+    set escapedString to my replaceText(escapedString, "\"", "\\\"")
+    
+    -- Replace newlines and returns
+    set escapedString to my replaceText(escapedString, return, "\\n")
+    set escapedString to my replaceText(escapedString, linefeed, "\\n")
+    
+    -- Replace tabs
+    set escapedString to my replaceText(escapedString, tab, "\\t")
+    
+    -- Replace other problematic characters
+    set escapedString to my replaceText(escapedString, "\r", "\\r")
+    
+    return escapedString
+end escapeJSONString
+
+on replaceText(inputString, searchString, replaceString)
+    set AppleScript's text item delimiters to searchString
+    set textItems to text items of inputString
+    set AppleScript's text item delimiters to replaceString
+    set outputString to textItems as string
+    set AppleScript's text item delimiters to ""
+    return outputString
+end replaceText

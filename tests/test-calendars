@@ -1,0 +1,165 @@
+#!/bin/bash
+# Calendar Operations Test
+# Tests: calendar listing, existence verification, and consistency
+
+set -e  # Exit on any error
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$(dirname "$SCRIPT_DIR")/bin"
+
+# Load shared utilities and verification
+source "$SCRIPT_DIR/lib/test-utils.sh"
+source "$SCRIPT_DIR/lib/ground-truth-verify.sh"
+
+# Load test configuration
+source "$SCRIPT_DIR/lib/test-config.sh"
+TEST_CALENDAR="$TEST_CALENDAR_SHARED"
+
+echo "=== Calendar Operations Test ==="
+echo "Test Calendar: $TEST_CALENDAR"
+echo ""
+
+# Ensure test calendar exists
+print_info "Setting up test calendar..."
+create_result=$("$SCRIPT_DIR/tools/cal-test-setup" create "$TEST_CALENDAR" 2>&1)
+if echo "$create_result" | grep -q '"status": "created"' || echo "$create_result" | grep -q '"status": "exists"'; then
+    print_pass "Test calendar ready for testing"
+else
+    print_fail "Test calendar setup failed: $create_result"
+    exit 1
+fi
+
+# Test 1: Calendar listing
+print_test "Listing all calendars"
+list_result=$(./cal-list 2>&1)
+if validate_json_response "$list_result" "$SCRIPT_DIR"; then
+    print_pass "Calendar listing returns valid JSON"
+    
+    # Check JSON structure
+    if echo "$list_result" | jq -e '.calendars' > /dev/null 2>&1; then
+        print_pass "Calendar list has correct JSON structure"
+    else
+        print_fail "Calendar list missing 'calendars' key"
+    fi
+    
+    # Check if it's an array
+    if echo "$list_result" | jq -e '.calendars | type == "array"' > /dev/null 2>&1; then
+        print_pass "Calendar list is properly formatted as array"
+    else
+        print_fail "Calendar list is not an array"
+    fi
+else
+    print_fail "Invalid JSON from calendar listing: $list_result"
+fi
+
+# Test 2: Test calendar presence in CLI listing
+print_test "Verifying test calendar appears in CLI listing"
+if echo "$list_result" | jq -r '.calendars[]' | grep -q "^$TEST_CALENDAR$"; then
+    print_pass "Test calendar found in CLI listing"
+else
+    print_fail "Test calendar not found in CLI listing"
+fi
+
+# Test 3: Calendar existence verification via Calendar app
+test_calendar_existence "$TEST_CALENDAR" "true"
+
+# Test 4: Calendar listing consistency between CLI and Calendar app
+print_test "Comparing CLI calendar list with Calendar app"
+cli_calendars=$(echo "$list_result" | jq -r '.calendars[]' | sort)
+ground_truth_calendars=$(list_calendars_ground_truth | sort)
+
+# Count calendars from both sources
+cli_count=$(echo "$cli_calendars" | wc -l)
+gt_count=$(echo "$ground_truth_calendars" | wc -l)
+
+if [[ "$cli_count" -eq "$gt_count" ]]; then
+    print_pass "CLI and Calendar app have same number of calendars ($cli_count)"
+else
+    print_info "CLI calendars: $cli_count, Calendar app: $gt_count (may include hidden calendars)"
+fi
+
+# Test 5: Verify our test calendar exists in both lists
+print_test "Verifying test calendar consistency between CLI and Calendar app"
+cli_has_test=$(echo "$cli_calendars" | grep -c "^$TEST_CALENDAR$" || echo "0")
+gt_has_test=$(echo "$ground_truth_calendars" | grep -c "^$TEST_CALENDAR$" || echo "0")
+
+if [[ "$cli_has_test" -eq 1 && "$gt_has_test" -eq 1 ]]; then
+    print_pass "Test calendar found in both CLI and Calendar app"
+elif [[ "$cli_has_test" -eq 1 && "$gt_has_test" -eq 0 ]]; then
+    print_fail "Test calendar in CLI but not in Calendar app"
+elif [[ "$cli_has_test" -eq 0 && "$gt_has_test" -eq 1 ]]; then
+    print_fail "Test calendar in Calendar app but not in CLI"
+else
+    print_fail "Test calendar not found in either CLI or Calendar app"
+fi
+
+# Test 6: Calendar listing with non-empty results
+print_test "Verifying calendar list is not empty"
+calendar_count=$(echo "$list_result" | jq '.calendars | length' 2>/dev/null || echo "0")
+if [[ "$calendar_count" -gt 0 ]]; then
+    print_pass "Calendar list contains $calendar_count calendars"
+else
+    print_fail "Calendar list is empty"
+fi
+
+# Test 7: Calendar name validation in listing
+print_test "Validating calendar names in listing"
+invalid_names=0
+while IFS= read -r calendar_name; do
+    if [[ -z "$calendar_name" ]]; then
+        ((invalid_names++))
+    fi
+done <<< "$(echo "$list_result" | jq -r '.calendars[]' 2>/dev/null || echo "")"
+
+if [[ "$invalid_names" -eq 0 ]]; then
+    print_pass "All calendar names are valid (non-empty)"
+else
+    print_fail "Found $invalid_names invalid (empty) calendar names"
+fi
+
+# Test 8: Calendar details verification
+print_test "Verifying calendar details for test calendar"
+calendar_details=$(get_calendar_details "$TEST_CALENDAR")
+if echo "$calendar_details" | jq -e '.exists == true' > /dev/null 2>&1; then
+    calendar_name=$(echo "$calendar_details" | jq -r '.name')
+    if [[ "$calendar_name" == "$TEST_CALENDAR" ]]; then
+        print_pass "Calendar name matches in details"
+    else
+        print_fail "Calendar name mismatch in details: expected '$TEST_CALENDAR', got '$calendar_name'"
+    fi
+else
+    print_fail "Calendar details indicate calendar doesn't exist"
+fi
+
+# Test 9: Multiple calendar operations consistency
+print_test "Testing multiple calendar listing calls for consistency"
+list_result2=$(./cal-list 2>&1)
+if [[ "$list_result" == "$list_result2" ]]; then
+    print_pass "Multiple calendar listing calls return identical results"
+else
+    print_info "Calendar listings differ (may be due to timing or external changes)"
+fi
+
+# Test 10: Calendar listing performance
+print_test "Testing calendar listing response time"
+start_time=$(date +%s%N)
+./cal-list > /dev/null 2>&1
+end_time=$(date +%s%N)
+duration=$(( (end_time - start_time) / 1000000 )) # Convert to milliseconds
+
+if [[ "$duration" -lt 5000 ]]; then # Less than 5 seconds
+    print_pass "Calendar listing completed in ${duration}ms (acceptable performance)"
+else
+    print_info "Calendar listing took ${duration}ms (may be slow)"
+fi
+
+# Summary
+print_test_summary
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+    echo ""
+    echo "✅ All calendar operation tests passed!"
+else
+    echo ""
+    echo "❌ Some calendar operation tests failed"
+fi

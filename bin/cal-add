@@ -1,0 +1,180 @@
+#!/usr/bin/osascript
+-- Add a new event to a calendar
+-- Usage: ./cal-add <calendar_name> <title> <start_date> <end_date> [description]
+-- Date format: YYYY-MM-DD-HH-MM
+-- Output: JSON object with created event details
+
+on run argv
+    if length of argv < 4 then
+        return "{\"error\": \"Usage: cal-add <calendar_name> <title> <start_date> <end_date> [description]\"}"
+    end if
+    
+    try
+        set calendarName to item 1 of argv
+        set eventTitle to item 2 of argv
+        set startDateStr to item 3 of argv
+        set endDateStr to item 4 of argv
+        
+        set eventDescription to ""
+        if length of argv ≥ 5 then
+            set eventDescription to item 5 of argv
+        end if
+        
+        set startDate to parse_date(startDateStr)
+        set endDate to parse_date(endDateStr)
+        
+        set newEvent to add_event(calendarName, eventTitle, startDate, endDate, eventDescription)
+        set jsonOutput to format_created_event(newEvent, eventTitle, eventDescription, startDate, endDate)
+        
+        return jsonOutput
+    on error errMsg
+        return "{\"error\": \"" & escapeJSONString(errMsg) & "\"}"
+    end try
+end run
+
+on parse_date(dateStr)
+    set dateComponents to my splitString(dateStr, "-")
+    
+    if length of dateComponents < 5 then
+        error "Invalid date format. Use YYYY-MM-DD-HH-MM"
+    end if
+    
+    set yearNum to (item 1 of dateComponents) as integer
+    set monthNum to (item 2 of dateComponents) as integer
+    set dayNum to (item 3 of dateComponents) as integer
+    set hourNum to (item 4 of dateComponents) as integer
+    set minuteNum to (item 5 of dateComponents) as integer
+    
+    return make_date(yearNum, monthNum, dayNum, hourNum, minuteNum)
+end parse_date
+
+on make_date(yearNum, monthNum, dayNum, hourNum, minuteNum)
+    set newDate to current date
+    set year of newDate to yearNum
+    set month of newDate to monthNum
+    set day of newDate to dayNum
+    set hours of newDate to hourNum
+    set minutes of newDate to minuteNum
+    set seconds of newDate to 0
+    return newDate
+end make_date
+
+on add_event(calendarName, eventTitle, startDate, endDate, eventDescription)
+    tell application "Calendar"
+        tell calendar calendarName
+            set newEvent to make new event with properties {summary:eventTitle, start date:startDate, end date:endDate}
+            if eventDescription is not "" then
+                set description of newEvent to eventDescription
+            end if
+        end tell
+        return newEvent
+    end tell
+end add_event
+
+on format_created_event(newEvent, eventTitle, eventDescription, startDate, endDate)
+    set startDateISO to my formatDateISO(startDate)
+    set endDateISO to my formatDateISO(endDate)
+    
+    set eventTitleJSON to my escapeJSONString(eventTitle)
+    set eventDescJSON to my escapeJSONString(eventDescription)
+    
+    set jsonOutput to "{"
+    set jsonOutput to jsonOutput & "\"status\": \"created\","
+    set jsonOutput to jsonOutput & "\"event\": {"
+    set jsonOutput to jsonOutput & "\"title\": \"" & eventTitleJSON & "\","
+    set jsonOutput to jsonOutput & "\"description\": \"" & eventDescJSON & "\","
+    set jsonOutput to jsonOutput & "\"startDate\": \"" & startDateISO & "\","
+    set jsonOutput to jsonOutput & "\"endDate\": \"" & endDateISO & "\""
+    set jsonOutput to jsonOutput & "}}"
+    
+    return jsonOutput
+end format_created_event
+
+on formatDateISO(dateValue)
+    set yearStr to year of dateValue as string
+    set monthNum to month of dateValue as integer
+    set dayNum to day of dateValue
+    set hourNum to hours of dateValue
+    set minNum to minutes of dateValue
+    set secNum to seconds of dateValue
+    
+    if monthNum < 10 then set monthStr to "0" & monthNum
+    if monthNum ≥ 10 then set monthStr to monthNum as string
+    if dayNum < 10 then set dayStr to "0" & dayNum
+    if dayNum ≥ 10 then set dayStr to dayNum as string
+    if hourNum < 10 then set hourStr to "0" & hourNum
+    if hourNum ≥ 10 then set hourStr to hourNum as string
+    if minNum < 10 then set minStr to "0" & minNum
+    if minNum ≥ 10 then set minStr to minNum as string
+    if secNum < 10 then set secStr to "0" & secNum
+    if secNum ≥ 10 then set secStr to secNum as string
+    
+    -- Add timezone offset (system timezone)
+    set gmtOffset to time to GMT
+    set offsetHours to gmtOffset div 3600
+    set offsetMinutes to (gmtOffset mod 3600) div 60
+    if offsetHours ≥ 0 then
+        set offsetSign to "+"
+    else
+        set offsetSign to "-"
+        set offsetHours to -offsetHours
+    end if
+    
+    if offsetHours < 10 then set offsetHoursStr to "0" & offsetHours as string
+    if offsetHours ≥ 10 then set offsetHoursStr to offsetHours as string
+    if offsetMinutes < 10 then set offsetMinutesStr to "0" & offsetMinutes as string
+    if offsetMinutes ≥ 10 then set offsetMinutesStr to offsetMinutes as string
+    
+    set timezoneOffset to offsetSign & offsetHoursStr & ":" & offsetMinutesStr
+    
+    return yearStr & "-" & monthStr & "-" & dayStr & "T" & hourStr & ":" & minStr & ":" & secStr & timezoneOffset
+end formatDateISO
+
+on escapeJSONString(inputString)
+    if inputString is missing value then return ""
+    if inputString is "" then return ""
+    
+    set cleanedString to inputString as string
+    
+    -- Limit length to prevent JSON corruption
+    if length of cleanedString > 500 then
+        set cleanedString to (characters 1 thru 500 of cleanedString as string) & "..."
+    end if
+    
+    -- Escape JSON special characters
+    set escapedString to cleanedString
+    
+    -- Replace backslashes first (must be first)
+    set escapedString to my replaceText(escapedString, "\\", "\\\\")
+    
+    -- Replace quotes
+    set escapedString to my replaceText(escapedString, "\"", "\\\"")
+    
+    -- Replace newlines and returns
+    set escapedString to my replaceText(escapedString, return, "\\n")
+    set escapedString to my replaceText(escapedString, linefeed, "\\n")
+    
+    -- Replace tabs
+    set escapedString to my replaceText(escapedString, tab, "\\t")
+    
+    -- Replace other problematic characters
+    set escapedString to my replaceText(escapedString, "\r", "\\r")
+    
+    return escapedString
+end escapeJSONString
+
+on replaceText(inputString, searchString, replaceString)
+    set AppleScript's text item delimiters to searchString
+    set textItems to text items of inputString
+    set AppleScript's text item delimiters to replaceString
+    set outputString to textItems as string
+    set AppleScript's text item delimiters to ""
+    return outputString
+end replaceText
+
+on splitString(inputString, delimiter)
+    set AppleScript's text item delimiters to delimiter
+    set stringItems to text items of inputString
+    set AppleScript's text item delimiters to ""
+    return stringItems
+end splitString

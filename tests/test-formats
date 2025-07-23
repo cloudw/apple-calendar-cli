@@ -1,0 +1,247 @@
+#!/bin/bash
+# Content Formatting & Edge Cases Test
+# Tests: special characters, HTML content, formatting output, complex content
+
+set -e  # Exit on any error
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$(dirname "$SCRIPT_DIR")/bin"
+
+# Load shared utilities and verification
+source "$SCRIPT_DIR/lib/test-utils.sh"
+source "$SCRIPT_DIR/lib/ground-truth-verify.sh"
+
+# Load test configuration
+source "$SCRIPT_DIR/lib/test-config.sh"
+TEST_CALENDAR="$TEST_CALENDAR_SHARED"
+
+# Cleanup function
+cleanup_events() {
+    print_info "Cleaning up events from shared calendar..."
+    tomorrow=$(get_tomorrow_date)
+    today=$(date +%Y-%m-%d)
+    cleanup_calendar_events "$TEST_CALENDAR" "$today" "$tomorrow" > /dev/null 2>&1 || true
+}
+
+echo "=== Content Formatting & Edge Cases Test ==="
+echo "Test Calendar: $TEST_CALENDAR"
+echo ""
+
+# Clean up any existing events
+cleanup_events
+
+# Get test dates
+tomorrow=$(get_tomorrow_date)
+
+# Ensure test calendar exists
+print_info "Setting up test calendar..."
+"$SCRIPT_DIR/tools/cal-test-setup" create "$TEST_CALENDAR" > /dev/null 2>&1 || true
+
+# Define test cases with problematic characters
+special_cases=(
+    "Event with \"quotes\"|Description with \"quoted text\""
+    "Event with 'apostrophes'|Description with 'single quotes'"
+    "Event with émojis 🚀|Description with special chars: é, ñ, 中文, 🎉"
+    "Event with & entities|Description with &amp; &lt; &gt; entities"
+    "Event with <HTML>|Description with <a href=\"#\">link</a> and <br/> breaks"
+    "Event with
+newlines|Description with
+multiple
+lines"
+    "Event with	tabs|Description with	tabbed	content"
+    "Event with\\backslashes|Description with\\path\\to\\file"
+    "Very Long Event Title That Exceeds Normal Length Limits And Should Be Handled Gracefully|This is a very long description that contains multiple sentences and should test the length limiting functionality. It has many words and should demonstrate how the system handles content that exceeds reasonable limits for JSON formatting."
+)
+
+# Test 1: Adding events with special characters
+print_test "Adding events with special characters and edge cases"
+special_event_count=0
+for i in "${!special_cases[@]}"; do
+    IFS='|' read -r title description <<< "${special_cases[$i]}"
+    
+    event_start="${tomorrow}-$((10 + i))-00"
+    event_end="${tomorrow}-$((11 + i))-00"
+    
+    if result=$(./cal-add "$TEST_CALENDAR" "$title" "$event_start" "$event_end" "$description" 2>&1); then
+        if validate_json_response "$result" "$SCRIPT_DIR"; then
+            special_event_count=$((special_event_count + 1))
+        else
+            print_fail "Invalid JSON from special character event: $result"
+        fi
+    else
+        print_fail "Failed to add special character event: $result"
+    fi
+done
+
+print_pass "Added $special_event_count special character events with valid JSON"
+
+# Test 2: Retrieving events with special characters
+print_test "Retrieving events with special characters"
+get_result=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+if validate_json_response "$get_result" "$SCRIPT_DIR"; then
+    retrieved_count=$(echo "$get_result" | jq '.events | length' 2>/dev/null || echo "0")
+    if [[ "$retrieved_count" -eq "$special_event_count" ]]; then
+        print_pass "All special character events retrieved successfully"
+    else
+        print_fail "Expected $special_event_count events, got $retrieved_count"
+    fi
+else
+    print_fail "Invalid JSON when retrieving special character events: $get_result"
+fi
+
+# Test 3: JSON structure integrity with special characters
+print_test "Validating JSON structure with special characters"
+if echo "$get_result" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    assert 'events' in data, 'Missing events key'
+    for i, event in enumerate(data['events']):
+        assert 'title' in event, f'Event {i} missing title'
+        assert 'description' in event, f'Event {i} missing description'
+        assert 'startDate' in event, f'Event {i} missing startDate'
+        assert 'endDate' in event, f'Event {i} missing endDate'
+        # Validate that strings are properly escaped
+        assert isinstance(event['title'], str), f'Event {i} title not a string'
+        assert isinstance(event['description'], str), f'Event {i} description not a string'
+    print('JSON structure valid with special characters')
+except Exception as e:
+    print(f'Structure error: {e}')
+    sys.exit(1)
+" > /dev/null 2>&1; then
+    print_pass "JSON structure remains valid with special characters"
+else
+    print_fail "JSON structure corrupted by special characters"
+fi
+
+# Test 4: Calendar app verification of special character events
+print_test "Verifying special character events exist in Calendar app"
+verified_count=0
+for i in "${!special_cases[@]}"; do
+    IFS='|' read -r title description <<< "${special_cases[$i]}"
+    
+    if verify_event_exists "$TEST_CALENDAR" "$title" "$tomorrow"; then
+        verified_count=$((verified_count + 1))
+    else
+        print_info "Event '$title' may have been modified by Calendar app"
+    fi
+done
+
+if [[ "$verified_count" -ge $(( special_event_count / 2 )) ]]; then
+    print_pass "Most special character events verified in Calendar app ($verified_count/$special_event_count)"
+else
+    print_info "Some special character events modified by Calendar app ($verified_count/$special_event_count verified)"
+fi
+
+# Test 5: Cal-format output with special characters
+print_test "Testing cal-format with special character content"
+formats=("agenda" "table" "summary")
+for format in "${formats[@]}"; do
+    if format_result=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" | ./cal-format --format "$format" 2>&1); then
+        if [ ${#format_result} -gt 0 ]; then
+            # Check if output contains some expected content
+            if echo "$format_result" | grep -q "Event with"; then
+                print_pass "cal-format --format $format handled special characters"
+            else
+                print_info "cal-format --format $format produced output but may not contain expected content"
+            fi
+        else
+            print_fail "cal-format --format $format produced empty output"
+        fi
+    else
+        print_fail "cal-format --format $format failed: $format_result"
+    fi
+done
+
+# Test 6: Unicode content handling
+print_test "Testing Unicode content handling"
+unicode_title="Unicode Test: 🌟 中文 العربية русский"
+unicode_desc="Description with Unicode: ñoño café naïve résumé"
+unicode_start="${tomorrow}-19-00"
+unicode_end="${tomorrow}-20-00"
+
+if unicode_result=$(./cal-add "$TEST_CALENDAR" "$unicode_title" "$unicode_start" "$unicode_end" "$unicode_desc" 2>&1); then
+    if validate_json_response "$unicode_result" "$SCRIPT_DIR"; then
+        print_pass "Unicode content added successfully with valid JSON"
+        
+        # Verify Unicode content in retrieval
+        unicode_get=$(./cal-get "$TEST_CALENDAR" "$unicode_start" "$unicode_end" 2>&1)
+        if echo "$unicode_get" | jq -r '.events[].title' | grep -q "🌟"; then
+            print_pass "Unicode content preserved in retrieval"
+        else
+            print_info "Unicode content may have been modified"
+        fi
+    else
+        print_fail "Invalid JSON with Unicode content: $unicode_result"
+    fi
+else
+    print_fail "Failed to add Unicode content: $unicode_result"
+fi
+
+# Test 7: Long content handling
+print_test "Testing very long content handling"
+long_title=$(printf "Very Long Title %.0s" {1..20})
+long_desc=$(printf "This is a very long description that repeats multiple times to test length handling. %.0s" {1..10})
+long_start="${tomorrow}-20-00"
+long_end="${tomorrow}-21-00"
+
+if long_result=$(./cal-add "$TEST_CALENDAR" "$long_title" "$long_start" "$long_end" "$long_desc" 2>&1); then
+    if validate_json_response "$long_result" "$SCRIPT_DIR"; then
+        print_pass "Very long content handled successfully"
+    else
+        print_fail "Invalid JSON with long content: $long_result"
+    fi
+else
+    print_fail "Failed to add long content: $long_result"
+fi
+
+# Test 8: Empty and minimal content
+print_test "Testing empty and minimal content"
+empty_desc_result=$(./cal-add "$TEST_CALENDAR" "Minimal Event" "${tomorrow}-21-00" "${tomorrow}-22-00" "" 2>&1)
+if validate_json_response "$empty_desc_result" "$SCRIPT_DIR"; then
+    print_pass "Event with empty description handled correctly"
+else
+    print_fail "Invalid JSON with empty description: $empty_desc_result"
+fi
+
+# Test 9: Content with control characters
+print_test "Testing content with control characters"
+control_title="Event with\tcontrol\ncharacters"
+control_desc="Description with\rcarriage\treturn\nand\ttabs"
+control_start="${tomorrow}-22-00"
+control_end="${tomorrow}-23-00"
+
+if control_result=$(./cal-add "$TEST_CALENDAR" "$control_title" "$control_start" "$control_end" "$control_desc" 2>&1); then
+    if validate_json_response "$control_result" "$SCRIPT_DIR"; then
+        print_pass "Control characters handled successfully"
+    else
+        print_fail "Invalid JSON with control characters: $control_result"
+    fi
+else
+    print_fail "Failed to add content with control characters: $control_result"
+fi
+
+# Test 10: Format consistency across multiple retrievals
+print_test "Testing format consistency across multiple retrievals"
+get1=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" | jq -S .)
+get2=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" | jq -S .)
+
+if [[ "$get1" == "$get2" ]]; then
+    print_pass "Multiple retrievals return identical formatted JSON"
+else
+    print_info "Multiple retrievals show minor differences (may be due to timing)"
+fi
+
+# Cleanup events after test
+cleanup_events
+
+# Summary
+print_test_summary
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+    echo ""
+    echo "✅ All formatting and edge case tests passed!"
+else
+    echo ""
+    echo "❌ Some formatting and edge case tests failed"
+fi

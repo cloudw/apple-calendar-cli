@@ -1,0 +1,190 @@
+#!/bin/bash
+# Event Operations Test
+# Tests: event creation, retrieval, deletion, and validation
+
+set -e  # Exit on any error
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$(dirname "$SCRIPT_DIR")/bin"
+
+# Load shared utilities and verification
+source "$SCRIPT_DIR/lib/test-utils.sh"
+source "$SCRIPT_DIR/lib/ground-truth-verify.sh"
+
+# Load test configuration
+source "$SCRIPT_DIR/lib/test-config.sh"
+TEST_CALENDAR="$TEST_CALENDAR_SHARED"
+
+# Cleanup function
+cleanup_events() {
+    print_info "Cleaning up events from shared calendar..."
+    tomorrow=$(get_tomorrow_date)
+    today=$(date +%Y-%m-%d)
+    cleanup_calendar_events "$TEST_CALENDAR" "$today" "$tomorrow" > /dev/null 2>&1 || true
+}
+
+echo "=== Event Operations Test ==="
+echo "Test Calendar: $TEST_CALENDAR"
+echo ""
+
+# Clean up any existing events
+cleanup_events
+
+# Get test dates
+tomorrow=$(get_tomorrow_date)
+today=$(date +%Y-%m-%d)
+
+# Ensure test calendar exists
+print_info "Setting up test calendar..."
+"$SCRIPT_DIR/tools/cal-test-setup" create "$TEST_CALENDAR" > /dev/null 2>&1 || true
+
+# Test 1: Basic event creation
+print_test "Creating basic event"
+event_title="Basic Test Event"
+event_description="Test description for basic event"
+event_start="${tomorrow}-10-00"
+event_end="${tomorrow}-11-00"
+
+add_result=$(./cal-add "$TEST_CALENDAR" "$event_title" "$event_start" "$event_end" "$event_description" 2>&1)
+if echo "$add_result" | grep -q '"status": "created"'; then
+    print_pass "Basic event created successfully"
+else
+    print_fail "Basic event creation failed: $add_result"
+fi
+
+# Verify event exists via Calendar app
+test_event_existence "$TEST_CALENDAR" "$event_title" "$tomorrow" "true"
+
+# Test 2: Event creation without description
+print_test "Creating event without description"
+event_no_desc="Event Without Description"
+event_start2="${tomorrow}-11-00"
+event_end2="${tomorrow}-12-00"
+
+add_result2=$(./cal-add "$TEST_CALENDAR" "$event_no_desc" "$event_start2" "$event_end2" 2>&1)
+if echo "$add_result2" | grep -q '"status": "created"'; then
+    print_pass "Event without description created successfully"
+else
+    print_fail "Event without description creation failed: $add_result2"
+fi
+
+# Test 3: Event retrieval and JSON validation
+print_test "Retrieving events and validating JSON structure"
+get_result=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+if validate_json_response "$get_result" "$SCRIPT_DIR"; then
+    print_pass "Event retrieval returns valid JSON"
+    
+    # Validate JSON structure
+    if echo "$get_result" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    assert 'events' in data, 'Missing events key'
+    for i, event in enumerate(data['events']):
+        assert 'title' in event, f'Event {i} missing title'
+        assert 'description' in event, f'Event {i} missing description'
+        assert 'startDate' in event, f'Event {i} missing startDate'
+        assert 'endDate' in event, f'Event {i} missing endDate'
+    print('JSON structure valid')
+except Exception as e:
+    print(f'Structure error: {e}')
+    sys.exit(1)
+" > /dev/null 2>&1; then
+        print_pass "Event JSON structure is complete and valid"
+    else
+        print_fail "Event JSON structure validation failed"
+    fi
+else
+    print_fail "Invalid JSON from event retrieval: $get_result"
+fi
+
+# Test 4: Event count verification
+test_event_count "$TEST_CALENDAR" "$tomorrow" "2"
+
+# Test 5: Event content verification
+print_test "Verifying event content matches input"
+if echo "$get_result" | jq -r '.events[].title' | grep -q "^$event_title$"; then
+    print_pass "Basic event title matches"
+else
+    print_fail "Basic event title not found in results"
+fi
+
+if echo "$get_result" | jq -r '.events[].description' | grep -q "^$event_description$"; then
+    print_pass "Basic event description matches"
+else
+    print_fail "Basic event description not found in results"
+fi
+
+# Test 6: Event deletion
+print_test "Deleting specific event"
+delete_result=$(./cal-delete "$TEST_CALENDAR" "$event_title" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+if echo "$delete_result" | grep -q '"eventsDeleted": 1'; then
+    print_pass "Event deleted successfully"
+else
+    print_fail "Event deletion failed: $delete_result"
+fi
+
+# Verify deletion via Calendar app
+test_event_existence "$TEST_CALENDAR" "$event_title" "$tomorrow" "false"
+test_event_existence "$TEST_CALENDAR" "$event_no_desc" "$tomorrow" "true"
+test_event_count "$TEST_CALENDAR" "$tomorrow" "1"
+
+# Test 7: Event deletion verification in JSON
+print_test "Verifying deletion in event list"
+get_after_delete=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+if echo "$get_after_delete" | jq -r '.events[].title' | grep -q "^$event_title$"; then
+    print_fail "Deleted event still appears in event list"
+else
+    print_pass "Deleted event correctly removed from event list"
+fi
+
+# Test 8: Multiple event deletion
+print_test "Adding and deleting multiple events"
+event_multi1="Multi Event 1"
+event_multi2="Multi Event 2"
+
+# Add multiple events
+./cal-add "$TEST_CALENDAR" "$event_multi1" "${tomorrow}-13-00" "${tomorrow}-14-00" "First multi event" > /dev/null 2>&1
+./cal-add "$TEST_CALENDAR" "$event_multi2" "${tomorrow}-14-00" "${tomorrow}-15-00" "Second multi event" > /dev/null 2>&1
+
+# Verify they exist
+test_event_count "$TEST_CALENDAR" "$tomorrow" "3"
+
+# Delete first multi event
+delete_multi1=$(./cal-delete "$TEST_CALENDAR" "$event_multi1" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+if echo "$delete_multi1" | grep -q '"eventsDeleted": 1'; then
+    print_pass "First multi event deleted"
+    test_event_count "$TEST_CALENDAR" "$tomorrow" "2"
+else
+    print_fail "First multi event deletion failed"
+fi
+
+# Test 9: Event with exact time matching
+print_test "Creating and retrieving event with exact time range"
+exact_event="Exact Time Event"
+exact_start="${tomorrow}-16-30"
+exact_end="${tomorrow}-17-15"
+
+./cal-add "$TEST_CALENDAR" "$exact_event" "$exact_start" "$exact_end" "Exact time test" > /dev/null 2>&1
+
+# Get events with exact time range
+exact_get=$(./cal-get "$TEST_CALENDAR" "$exact_start" "$exact_end" 2>&1)
+if echo "$exact_get" | jq -r '.events[].title' | grep -q "^$exact_event$"; then
+    print_pass "Event found with exact time range"
+else
+    print_fail "Event not found with exact time range"
+fi
+
+# Cleanup events after test
+cleanup_events
+
+# Summary
+print_test_summary
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+    echo ""
+    echo "✅ All event operation tests passed!"
+else
+    echo ""
+    echo "❌ Some event operation tests failed"
+fi
