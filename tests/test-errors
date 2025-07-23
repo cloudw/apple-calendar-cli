@@ -176,17 +176,17 @@ else
     print_info "cal-delete-cal tool not found (removed due to macOS restrictions)"
 fi
 
-# Test 8: Event deletion with non-existent event
-print_test "Testing deletion of non-existent event"
-nonexistent_delete=$(./cal-delete "$TEST_CALENDAR" "NonExistentEvent12345" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1 || true)
+# Test 8: Event deletion with non-existent ID
+print_test "Testing deletion of non-existent event ID"
+nonexistent_delete=$("$CLI_DIR/cal-delete" "$TEST_CALENDAR" "NONEXISTENT-ID-12345-ABCD-EF67-890123456789" 2>&1 || true)
 if validate_json_response "$nonexistent_delete" "$SCRIPT_DIR"; then
-    if echo "$nonexistent_delete" | grep -q '"eventsDeleted": 0'; then
-        print_pass "Non-existent event deletion returns 0 events deleted"
+    if echo "$nonexistent_delete" | grep -q '"totalEventsDeleted": 0'; then
+        print_pass "Non-existent event ID deletion returns 0 events deleted"
     else
-        print_info "Non-existent event deletion: $nonexistent_delete"
+        print_info "Non-existent event ID deletion: $nonexistent_delete"
     fi
 else
-    print_fail "Non-existent event deletion produced invalid JSON: $nonexistent_delete"
+    print_fail "Non-existent event ID deletion produced invalid JSON: $nonexistent_delete"
 fi
 
 # Test 9: Extremely long input handling

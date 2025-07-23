@@ -70,7 +70,7 @@ on get_events(calendarName, startDate, endDate)
             set eventRecords to {}
             repeat with currentEvent in eventList
                 try
-                    set eventRecord to {eventStart:start date of currentEvent, eventEnd:end date of currentEvent, eventTitle:summary of currentEvent}
+                    set eventRecord to {eventStart:start date of currentEvent, eventEnd:end date of currentEvent, eventTitle:summary of currentEvent, eventId:id of currentEvent}
                     try
                         set eventDesc to description of currentEvent
                         if eventDesc is not "" then
@@ -104,6 +104,7 @@ on format_events_for_display(eventList)
             set eventEnd to eventEnd of eventRecord
             set eventTitle to eventTitle of eventRecord
             set eventDesc to eventDesc of eventRecord
+            set eventId to eventId of eventRecord
             
             set startDateISO to my formatDateISO(eventStart)
             set endDateISO to my formatDateISO(eventEnd)
@@ -113,6 +114,7 @@ on format_events_for_display(eventList)
             set eventDescJSON to my cleanAndEscapeJSON(eventDesc)
             
             set eventJSON to "{"
+            set eventJSON to eventJSON & "\"id\": \"" & eventId & "\","
             set eventJSON to eventJSON & "\"title\": \"" & eventTitleJSON & "\","
             set eventJSON to eventJSON & "\"description\": \"" & eventDescJSON & "\","
             set eventJSON to eventJSON & "\"startDate\": \"" & startDateISO & "\","

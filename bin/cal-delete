@@ -1,25 +1,19 @@
 #!/usr/bin/osascript
--- Delete events by title from a calendar within a date range
--- Usage: ./cal-delete <calendar_name> <event_title> <start_date> <end_date>
--- Date format: YYYY-MM-DD or YYYY-MM-DD-HH-MM
+-- Delete events by ID from a calendar
+-- Usage: ./cal-delete <calendar_name> <event_id1> [event_id2] [event_id3] ...
 -- Output: JSON object with deletion results
 
 on run argv
-    if length of argv < 4 then
-        return "{\"error\": \"Usage: cal-delete <calendar_name> <event_title> <start_date> <end_date>\"}"
+    if length of argv < 2 then
+        return "{\"error\": \"Usage: cal-delete <calendar_name> <event_id1> [event_id2] [event_id3] ...\"}"
     end if
     
     try
         set calendarName to item 1 of argv
-        set eventTitle to item 2 of argv
-        set startDateStr to item 3 of argv
-        set endDateStr to item 4 of argv
+        set eventIds to items 2 thru -1 of argv
         
-        set startDate to parse_date(startDateStr)
-        set endDate to parse_date(endDateStr)
-        
-        set deleteCount to delete_events_by_title(calendarName, eventTitle, startDate, endDate)
-        set jsonOutput to format_delete_result(eventTitle, deleteCount)
+        set results to delete_events_by_ids(calendarName, eventIds)
+        set jsonOutput to format_delete_results(calendarName, results)
         
         return jsonOutput
     on error errMsg
@@ -27,66 +21,61 @@ on run argv
     end try
 end run
 
-on parse_date(dateStr)
-    set dateComponents to my splitString(dateStr, "-")
+on delete_events_by_ids(calendarName, eventIds)
+    set results to {}
+    set totalDeleted to 0
     
-    if length of dateComponents < 3 then
-        error "Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD-HH-MM"
-    end if
-    
-    set yearNum to (item 1 of dateComponents) as integer
-    set monthNum to (item 2 of dateComponents) as integer
-    set dayNum to (item 3 of dateComponents) as integer
-    
-    set hourNum to 0
-    set minuteNum to 0
-    
-    if length of dateComponents ≥ 4 then
-        set hourNum to (item 4 of dateComponents) as integer
-    end if
-    
-    if length of dateComponents ≥ 5 then
-        set minuteNum to (item 5 of dateComponents) as integer
-    end if
-    
-    return make_date(yearNum, monthNum, dayNum, hourNum, minuteNum)
-end parse_date
-
-on make_date(yearNum, monthNum, dayNum, hourNum, minuteNum)
-    set newDate to current date
-    set year of newDate to yearNum
-    set month of newDate to monthNum
-    set day of newDate to dayNum
-    set hours of newDate to hourNum
-    set minutes of newDate to minuteNum
-    set seconds of newDate to 0
-    return newDate
-end make_date
-
-on delete_events_by_title(calendarName, eventTitle, startDate, endDate)
     tell application "Calendar"
         tell calendar calendarName
-            set eventsToDelete to every event whose summary is eventTitle and start date ≥ startDate and start date ≤ endDate
-            set deleteCount to count of eventsToDelete
-            repeat with eventToDelete in eventsToDelete
-                delete eventToDelete
+            repeat with eventId in eventIds
+                try
+                    set eventToDelete to event id eventId
+                    set eventTitle to summary of eventToDelete
+                    delete eventToDelete
+                    set end of results to {event_id:eventId, event_title:eventTitle, status:"deleted"}
+                    set totalDeleted to totalDeleted + 1
+                on error deleteErr
+                    set end of results to {event_id:eventId, event_title:"", status:"error", error_message:deleteErr}
+                end try
             end repeat
         end tell
-        return deleteCount
     end tell
-end delete_events_by_title
+    
+    return {total_deleted:totalDeleted, individual_results:results}
+end delete_events_by_ids
 
-on format_delete_result(eventTitle, deleteCount)
-    set eventTitleJSON to my escapeJSONString(eventTitle)
+on format_delete_results(calendarName, results)
+    set totalDeleted to total_deleted of results
+    set individualResults to individual_results of results
     
     set jsonOutput to "{"
-    set jsonOutput to jsonOutput & "\"status\": \"deleted\","
-    set jsonOutput to jsonOutput & "\"eventTitle\": \"" & eventTitleJSON & "\","
-    set jsonOutput to jsonOutput & "\"eventsDeleted\": " & deleteCount
+    set jsonOutput to jsonOutput & "\"status\": \"batch_deleted\","
+    set jsonOutput to jsonOutput & "\"calendar\": \"" & escapeJSONString(calendarName) & "\","
+    set jsonOutput to jsonOutput & "\"totalEventsDeleted\": " & totalDeleted & ","
+    set jsonOutput to jsonOutput & "\"results\": ["
+    
+    set first to true
+    repeat with result in individualResults
+        if not first then set jsonOutput to jsonOutput & ","
+        set first to false
+        
+        set jsonOutput to jsonOutput & "{"
+        set jsonOutput to jsonOutput & "\"eventId\": \"" & (event_id of result) & "\","
+        set jsonOutput to jsonOutput & "\"eventTitle\": \"" & escapeJSONString(event_title of result) & "\","
+        set jsonOutput to jsonOutput & "\"status\": \"" & (status of result) & "\""
+        
+        if status of result is "error" then
+            set jsonOutput to jsonOutput & ",\"error\": \"" & escapeJSONString(error_message of result) & "\""
+        end if
+        
+        set jsonOutput to jsonOutput & "}"
+    end repeat
+    
+    set jsonOutput to jsonOutput & "]"
     set jsonOutput to jsonOutput & "}"
     
     return jsonOutput
-end format_delete_result
+end format_delete_results
 
 on escapeJSONString(inputString)
     if inputString is missing value then return ""
@@ -129,10 +118,3 @@ on replaceText(inputString, searchString, replaceString)
     set AppleScript's text item delimiters to ""
     return outputString
 end replaceText
-
-on splitString(inputString, delimiter)
-    set AppleScript's text item delimiters to delimiter
-    set stringItems to text items of inputString
-    set AppleScript's text item delimiters to ""
-    return stringItems
-end splitString

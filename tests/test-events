@@ -45,7 +45,7 @@ event_description="Test description for basic event"
 event_start="${tomorrow}-10-00"
 event_end="${tomorrow}-11-00"
 
-add_result=$(./cal-add "$TEST_CALENDAR" "$event_title" "$event_start" "$event_end" "$event_description" 2>&1)
+add_result=$("$CLI_DIR/cal-add" "$TEST_CALENDAR" "$event_title" "$event_start" "$event_end" "$event_description" 2>&1)
 if echo "$add_result" | grep -q '"status": "created"'; then
     print_pass "Basic event created successfully"
 else
@@ -61,7 +61,7 @@ event_no_desc="Event Without Description"
 event_start2="${tomorrow}-11-00"
 event_end2="${tomorrow}-12-00"
 
-add_result2=$(./cal-add "$TEST_CALENDAR" "$event_no_desc" "$event_start2" "$event_end2" 2>&1)
+add_result2=$("$CLI_DIR/cal-add" "$TEST_CALENDAR" "$event_no_desc" "$event_start2" "$event_end2" 2>&1)
 if echo "$add_result2" | grep -q '"status": "created"'; then
     print_pass "Event without description created successfully"
 else
@@ -70,7 +70,7 @@ fi
 
 # Test 3: Event retrieval and JSON validation
 print_test "Retrieving events and validating JSON structure"
-get_result=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+get_result=$("$CLI_DIR/cal-get" "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
 if validate_json_response "$get_result" "$SCRIPT_DIR"; then
     print_pass "Event retrieval returns valid JSON"
     
@@ -115,13 +115,20 @@ else
     print_fail "Basic event description not found in results"
 fi
 
-# Test 6: Event deletion
-print_test "Deleting specific event"
-delete_result=$(./cal-delete "$TEST_CALENDAR" "$event_title" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
-if echo "$delete_result" | grep -q '"eventsDeleted": 1'; then
-    print_pass "Event deleted successfully"
+# Test 6: Event deletion (ID-based)
+print_test "Deleting specific event by ID"
+# Get the event ID first
+get_events_for_id=$("$CLI_DIR/cal-get" "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+event_id=$(echo "$get_events_for_id" | jq -r ".events[] | select(.title == \"$event_title\") | .id")
+if [ -z "$event_id" ] || [ "$event_id" = "null" ]; then
+    print_fail "Could not find event ID for deletion"
 else
-    print_fail "Event deletion failed: $delete_result"
+    delete_result=$("$CLI_DIR/cal-delete" "$TEST_CALENDAR" "$event_id" 2>&1)
+    if echo "$delete_result" | grep -q '"totalEventsDeleted": 1'; then
+        print_pass "Event deleted successfully by ID"
+    else
+        print_fail "Event deletion failed: $delete_result"
+    fi
 fi
 
 # Verify deletion via Calendar app
@@ -131,7 +138,7 @@ test_event_count "$TEST_CALENDAR" "$tomorrow" "1"
 
 # Test 7: Event deletion verification in JSON
 print_test "Verifying deletion in event list"
-get_after_delete=$(./cal-get "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+get_after_delete=$("$CLI_DIR/cal-get" "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
 if echo "$get_after_delete" | jq -r '.events[].title' | grep -q "^$event_title$"; then
     print_fail "Deleted event still appears in event list"
 else
@@ -144,19 +151,25 @@ event_multi1="Multi Event 1"
 event_multi2="Multi Event 2"
 
 # Add multiple events
-./cal-add "$TEST_CALENDAR" "$event_multi1" "${tomorrow}-13-00" "${tomorrow}-14-00" "First multi event" > /dev/null 2>&1
-./cal-add "$TEST_CALENDAR" "$event_multi2" "${tomorrow}-14-00" "${tomorrow}-15-00" "Second multi event" > /dev/null 2>&1
+"$CLI_DIR/cal-add" "$TEST_CALENDAR" "$event_multi1" "${tomorrow}-13-00" "${tomorrow}-14-00" "First multi event" > /dev/null 2>&1
+"$CLI_DIR/cal-add" "$TEST_CALENDAR" "$event_multi2" "${tomorrow}-14-00" "${tomorrow}-15-00" "Second multi event" > /dev/null 2>&1
 
 # Verify they exist
 test_event_count "$TEST_CALENDAR" "$tomorrow" "3"
 
-# Delete first multi event
-delete_multi1=$(./cal-delete "$TEST_CALENDAR" "$event_multi1" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
-if echo "$delete_multi1" | grep -q '"eventsDeleted": 1'; then
-    print_pass "First multi event deleted"
-    test_event_count "$TEST_CALENDAR" "$tomorrow" "2"
+# Delete first multi event by ID
+get_multi_events=$("$CLI_DIR/cal-get" "$TEST_CALENDAR" "${tomorrow}-00-00" "${tomorrow}-23-59" 2>&1)
+multi_event1_id=$(echo "$get_multi_events" | jq -r ".events[] | select(.title == \"$event_multi1\") | .id")
+if [ -z "$multi_event1_id" ] || [ "$multi_event1_id" = "null" ]; then
+    print_fail "Could not find multi event 1 ID for deletion"
 else
-    print_fail "First multi event deletion failed"
+    delete_multi1=$("$CLI_DIR/cal-delete" "$TEST_CALENDAR" "$multi_event1_id" 2>&1)
+    if echo "$delete_multi1" | grep -q '"totalEventsDeleted": 1'; then
+        print_pass "First multi event deleted by ID"
+        test_event_count "$TEST_CALENDAR" "$tomorrow" "2"
+    else
+        print_fail "First multi event deletion failed"
+    fi
 fi
 
 # Test 9: Event with exact time matching
@@ -165,10 +178,10 @@ exact_event="Exact Time Event"
 exact_start="${tomorrow}-16-30"
 exact_end="${tomorrow}-17-15"
 
-./cal-add "$TEST_CALENDAR" "$exact_event" "$exact_start" "$exact_end" "Exact time test" > /dev/null 2>&1
+"$CLI_DIR/cal-add" "$TEST_CALENDAR" "$exact_event" "$exact_start" "$exact_end" "Exact time test" > /dev/null 2>&1
 
 # Get events with exact time range
-exact_get=$(./cal-get "$TEST_CALENDAR" "$exact_start" "$exact_end" 2>&1)
+exact_get=$("$CLI_DIR/cal-get" "$TEST_CALENDAR" "$exact_start" "$exact_end" 2>&1)
 if echo "$exact_get" | jq -r '.events[].title' | grep -q "^$exact_event$"; then
     print_pass "Event found with exact time range"
 else

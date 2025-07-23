@@ -13,9 +13,9 @@ The Apple Calendar CLI tools provide programmatic access to macOS Calendar throu
 - `./bin/cal-create-cal <name> [description] [--ignore-exists]` - Creates new calendar
 
 **Event Operations:**
-- `./bin/cal-get <calendar> <start_date> <end_date>` - Retrieves events as JSON
+- `./bin/cal-get <calendar> <start_date> <end_date>` - Retrieves events as JSON (includes event IDs)
 - `./bin/cal-add <calendar> <title> <start_datetime> <end_datetime> [description]` - Creates event
-- `./bin/cal-delete <calendar> <title> <start_date> <end_date>` - Deletes matching events
+- `./bin/cal-delete <calendar> <event_id1> [event_id2] [event_id3]...` - Deletes events by ID (batch)
 
 **Output Formatting:**
 - `./bin/cal-format [--format agenda|table|summary]` - Converts JSON to human-readable format
@@ -60,11 +60,17 @@ The Apple Calendar CLI tools provide programmatic access to macOS Calendar throu
 
 ### 4. Event Management
 ```bash
-# Find specific events
+# Find specific events and get their IDs
 ./bin/cal-get "Work" "2024-12-01" "2024-12-31" | jq '.events[] | select(.title | contains("meeting"))'
 
-# Delete events by title
-./bin/cal-delete "Work" "Cancelled Meeting" "2024-12-15" "2024-12-15"
+# Get event ID for deletion
+event_id=$(./bin/cal-get "Work" "2024-12-15" "2024-12-15" | jq -r '.events[] | select(.title == "Cancelled Meeting") | .id')
+
+# Delete event by ID (efficient)
+./bin/cal-delete "Work" "$event_id"
+
+# Batch delete multiple events
+./bin/cal-delete "Work" "$event_id1" "$event_id2" "$event_id3"
 ```
 
 ## AI Assistant Integration Strategies

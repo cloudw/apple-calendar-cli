@@ -24,9 +24,9 @@ This approach works around Apple's API limitations while maintaining full compat
 - **`cal-delete-cal`** - ⚠️ Delete a calendar (limited by macOS security)
 
 **Event Management:**
-- **`cal-get`** - Get events from a calendar within a date range
+- **`cal-get`** - Get events from a calendar within a date range (includes event IDs)
 - **`cal-add`** - Add a new event to a calendar
-- **`cal-delete`** - Delete events by title from a calendar
+- **`cal-delete`** - Delete events by ID from a calendar (batch deletion)
 
 ### Formatting Tools
 
@@ -100,13 +100,26 @@ This limitation exists to prevent malicious scripts from deleting user calendar 
 ```
 
 ### Delete Events
+
+**⚠️ BREAKING CHANGE**: `cal-delete` now uses event IDs instead of title matching for efficient batch deletion.
+
 ```bash
-# Delete events by title within date range (example date)
-./cal-delete "Calendar Name" "Meeting Title" 2024-12-15 2024-12-15
+# First, get events to see their IDs
+./cal-get "Calendar Name" 2024-12-15 2024-12-15
+
+# Delete events by ID (single event)
+./cal-delete "Calendar Name" "C1496AC0-82F9-4220-891C-EB388318B634"
+
+# Delete multiple events by ID (batch deletion)
+./cal-delete "Calendar Name" "ID1" "ID2" "ID3"
 
 # With human-readable confirmation
-./cal-delete "Calendar Name" "Meeting Title" 2024-12-15 2024-12-15 | ./cal-format
+./cal-delete "Calendar Name" "C1496AC0-82F9-4220-891C-EB388318B634" | ./cal-format
 ```
+
+**Migration from Title-Based Deletion:**
+- Old: `./cal-delete "Calendar" "Event Title" "start-date" "end-date"`
+- New: Get IDs with `./cal-get`, then use `./cal-delete "Calendar" <event-id>`
 
 ## Date Formats
 
@@ -155,6 +168,7 @@ All tools output JSON with consistent structure:
 {
   "events": [
     {
+      "id": "C1496AC0-82F9-4220-891C-EB388318B634",
       "title": "Event Title",
       "description": "Event description",
       "startDate": "2024-12-15T14:00:00-08:00",
@@ -171,7 +185,7 @@ All tools output JSON with consistent structure:
 }
 ```
 
-### Event Operation Results (`cal-add`, `cal-delete`)
+### Event Creation (`cal-add`)
 ```json
 {
   "status": "created",
@@ -181,6 +195,27 @@ All tools output JSON with consistent structure:
     "startDate": "2024-12-15T14:00:00-08:00",
     "endDate": "2024-12-15T15:00:00-08:00"
   }
+}
+```
+
+### Event Deletion (`cal-delete`)
+```json
+{
+  "status": "batch_deleted",
+  "calendar": "Calendar Name",
+  "totalEventsDeleted": 2,
+  "results": [
+    {
+      "eventId": "C1496AC0-82F9-4220-891C-EB388318B634",
+      "eventTitle": "Meeting Title",
+      "status": "deleted"
+    },
+    {
+      "eventId": "D2345678-90AB-CDEF-1234-567890ABCDEF",
+      "eventTitle": "Other Event",
+      "status": "deleted"
+    }
+  ]
 }
 ```
 
